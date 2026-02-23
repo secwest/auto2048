@@ -28,17 +28,17 @@ on Windows).
 ## Architecture
 
 ```
-┌─────────────┐      ctypes/cdylib       ┌────────────────────┐
-│ play_2048.py │  ◄─────────────────────► │ search2048 (Rust)  │
-│  (Selenium)  │      search_ranked_moves │  expectimax engine │
-└──────┬───────┘                          └────────────────────┘
-       │  WebDriver
-       ▼
-┌──────────────┐
-│   Chrome      │   Merge2048 (play2048.co)
-│  (WebGL/PixiJS│   Svelte SPA
-│   canvas)     │
-└──────────────┘
+┌───────────────┐    ctypes/cdylib     ┌────────────────────┐
+│  play_2048.py │ ◄──────────────────► │ search2048 (Rust)  │
+│   (Selenium)  │  search_ranked_moves │  expectimax engine │
+└───────┬───────┘                      └────────────────────┘
+        │ WebDriver
+        ▼
+┌───────────────┐
+│    Chrome      │  Merge2048 (play2048.co)
+│  (WebGL/PixiJS │  Svelte SPA
+│    canvas)     │
+└────────────────┘
 ```
 
 | Component | Lines | Purpose |
