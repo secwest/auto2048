@@ -853,6 +853,15 @@ def play_ai(driver):
         except Exception:
             pass
 
+    def _is_gold_misread(t, p):
+        """Check if two values could be the same tile with gold misread (up to 4x)."""
+        if t == p:
+            return True
+        if t >= 128 and p >= 64:
+            if t == p * 2 or t == p * 4 or p == t * 2 or p == t * 4:
+                return True
+        return False
+
     def reconcile_board(expected, actual):
         """Reconcile expected (computed) board with actual (pixel-read) board.
         
@@ -959,12 +968,12 @@ def play_ai(driver):
                         p_empties = {(r,c) for r in range(4) for c in range(4)
                                      if pixel_board[r][c] == 0}
                         empty_mismatch = len(t_empties.symmetric_difference(p_empties))
-                        # Also compare cell values (ignoring gold 2x misreads)
+                        # Also compare cell values (ignoring gold misreads up to 4x)
                         val_mismatches = 0
                         for r in range(4):
                             for c in range(4):
                                 t, p = tracked_board[r][c], pixel_board[r][c]
-                                if t != p and t != p * 2 and p != t * 2:
+                                if t != p and not _is_gold_misread(t, p):
                                     val_mismatches += 1
                         if empty_mismatch >= 1 or val_mismatches >= 4:
                             print(f"  ⚠ Tracking divergence: {empty_mismatch} empty "
@@ -1021,6 +1030,7 @@ def play_ai(driver):
                                     prev_tracked_ref = [row[:] for row in tracked_board]
                                 tracked_board = None
                         move_num += 1
+                        print(f"  ✓ Recovery move {move_num}: {d} worked")
                         same_count = 0
                         break
                 if any_moved:
@@ -1070,7 +1080,7 @@ def play_ai(driver):
                     for r in range(4):
                         for c in range(4):
                             t, p = tracked_board[r][c], pixel_board[r][c]
-                            if t != p and t != p * 2 and p != t * 2:
+                            if t != p and not _is_gold_misread(t, p):
                                 val_mismatches += 1
                     if empty_mismatch >= 1 or val_mismatches >= 4:
                         print(f"  ⚠ Tracking divergence: {empty_mismatch} empty, "
