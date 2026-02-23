@@ -412,8 +412,17 @@ def send_key(driver, direction):
         driver.execute_script("""
         var opts = {key: arguments[0], code: arguments[0], keyCode: arguments[1],
                     which: arguments[1], bubbles: true, cancelable: true};
+        // Dispatch on document (primary)
         document.dispatchEvent(new KeyboardEvent('keydown', opts));
         document.dispatchEvent(new KeyboardEvent('keyup', opts));
+        // Also dispatch on canvas and body for redundancy
+        var c = document.querySelector('canvas');
+        if (c) {
+            c.dispatchEvent(new KeyboardEvent('keydown', opts));
+            c.dispatchEvent(new KeyboardEvent('keyup', opts));
+        }
+        document.body.dispatchEvent(new KeyboardEvent('keydown', opts));
+        document.body.dispatchEvent(new KeyboardEvent('keyup', opts));
         """, key, code)
     except Exception:
         pass
@@ -917,6 +926,14 @@ def play_ai(driver):
                     print(f"  ⚠ Board unchanged {same_count}x — trying recovery…")
                 dismiss_dialogs()
                 time.sleep(0.5)
+                # Try Selenium ActionChains as fallback key dispatch
+                try:
+                    canvas = driver.find_elements(By.CSS_SELECTOR, "canvas")
+                    if canvas:
+                        ActionChains(driver).click(canvas[0]).perform()
+                        time.sleep(0.2)
+                except Exception:
+                    pass
                 any_moved = False
                 for d in DIRECTIONS:
                     send_key(driver, d)
@@ -975,7 +992,20 @@ def play_ai(driver):
                             continue
                         # Delete failed — don't reset same_count
             if same_count > 12:
-                # Truly dead — no recovery after 12 iterations
+                # Check if game is truly over or just key dispatch failure
+                has_valid = any(simulate_move(board, d)[2] for d in DIRECTIONS)
+                if has_valid and same_count <= 25:
+                    # Board has valid moves — key dispatch failing, not game over
+                    # Try clicking canvas to regain focus and retry
+                    dismiss_dialogs()
+                    time.sleep(1.0)
+                    # Force re-read from pixels
+                    if tracked_board is not None:
+                        prev_tracked_ref = [row[:] for row in tracked_board]
+                    tracked_board = None
+                    same_count = 5  # Reset to try recovery again
+                    continue
+                # Truly dead — no recovery possible
                 mt = max_tile(board)
                 print(f"\n{'='*48}")
                 print(f"  GAME OVER — Best tile: {mt}  Moves: {move_num}")
