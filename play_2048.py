@@ -1014,12 +1014,15 @@ def play_ai(driver):
                 if charges[0] > 0:
                     print(f"  ⚡ UNDO to escape stuck state")
                     if use_undo(driver):
-                        if tracked_board is not None:
-                            prev_tracked_ref = [row[:] for row in tracked_board]
-                        tracked_board = None
-                        same_count = 0
                         time.sleep(0.5)
-                        continue
+                        check = read_board(driver)
+                        if check and check != pixel_board:
+                            if tracked_board is not None:
+                                prev_tracked_ref = [row[:] for row in tracked_board]
+                            tracked_board = None
+                            same_count = 0
+                            continue
+                        print(f"  ⚠ UNDO clicked but board unchanged")
                 if charges[2] > 0:
                     info = find_best_delete(board)
                     if info:
@@ -1027,11 +1030,16 @@ def play_ai(driver):
                         print(f"  ⚡ DELETE {val} tiles (charge left) "
                               f"to avoid game over")
                         if use_delete(driver, dr, dc):
-                            if tracked_board is not None:
-                                prev_tracked_ref = [row[:] for row in tracked_board]
-                            tracked_board = None
-                            same_count = 0
-                            continue
+                            time.sleep(0.5)
+                            check = read_board(driver)
+                            if check and check != pixel_board:
+                                if tracked_board is not None:
+                                    prev_tracked_ref = [row[:] for row in tracked_board]
+                                tracked_board = None
+                                same_count = 0
+                                continue
+                            # Delete clicked but board unchanged
+                            print(f"  ⚠ DELETE clicked but board unchanged")
                         # Delete failed — don't reset same_count
             if same_count > 12:
                 # Check for tracking divergence before declaring game over
