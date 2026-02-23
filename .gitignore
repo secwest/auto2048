@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.eggs/
+
+# Rust build artifacts
+search2048/target/
+
+# Game logs (regenerated each run)
+game_log.txt
+
+# Diagnostic scripts
+probe_game.py
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
