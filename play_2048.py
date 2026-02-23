@@ -409,12 +409,29 @@ JS_KEY_CODES = {
 def send_key(driver, direction):
     key, code = JS_KEY_CODES[direction]
     try:
+        # Primary: JS KeyboardEvent on document
         driver.execute_script("""
         var opts = {key: arguments[0], code: arguments[0], keyCode: arguments[1],
                     which: arguments[1], bubbles: true, cancelable: true};
         document.dispatchEvent(new KeyboardEvent('keydown', opts));
         document.dispatchEvent(new KeyboardEvent('keyup', opts));
         """, key, code)
+    except Exception:
+        pass
+
+
+def send_key_fallback(driver, direction):
+    """Aggressive key dispatch using Selenium ActionChains on canvas."""
+    from selenium.webdriver.common.keys import Keys
+    key_map = {
+        'up': Keys.ARROW_UP, 'down': Keys.ARROW_DOWN,
+        'left': Keys.ARROW_LEFT, 'right': Keys.ARROW_RIGHT
+    }
+    try:
+        canvas = driver.find_elements(By.CSS_SELECTOR, "canvas")
+        if canvas:
+            ActionChains(driver).click(canvas[0]).send_keys(
+                key_map[direction]).perform()
     except Exception:
         pass
 
@@ -1208,11 +1225,17 @@ def play_ai(driver):
 
         # Detect if move didn't register (pixel board unchanged)
         if new_board and new_board == pixel_board:
-            send_key(driver, direction)
-            time.sleep(MOVE_DELAY + 0.1)
+            # Try ActionChains fallback first
+            send_key_fallback(driver, direction)
+            time.sleep(MOVE_DELAY + 0.2)
             new_board = read_board(driver)
             if new_board and new_board == pixel_board:
-                continue
+                # Still unchanged — try JS dispatch one more time
+                send_key(driver, direction)
+                time.sleep(MOVE_DELAY + 0.1)
+                new_board = read_board(driver)
+                if new_board and new_board == pixel_board:
+                    continue
 
         # Verify move by checking for new 2/4 tile spawn
         if new_board and tracked_board is not None and moved:
@@ -1292,7 +1315,9 @@ def play_ai(driver):
             # unpredictable game mechanics destroyed a 256 tile in testing.
 
         # ── Periodic focus refresh and ad dismissal ──
-        if move_num % 10 == 0:
+        # More frequent when high tiles present (key dispatch more critical)
+        refresh_interval = 5 if mt >= 512 else 10
+        if move_num % refresh_interval == 0:
             try:
                 driver.execute_script(
                     "document.querySelectorAll('iframe').forEach(f=>f.remove());"
