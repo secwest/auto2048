@@ -188,7 +188,9 @@ fn evaluate(board: &Board) -> f64 {
     };
 
     // 4) Scatter penalty — non-adjacent duplicate high tiles
+    //    Extra harsh for tiles half the max (critical merge candidates)
     let mut scatter_penalty = 0.0;
+    let half_mt = mt / 2;
     let mut positions: [(usize, usize); 16] = [(0, 0); 16];
     let mut pos_count = 0;
     for r in 0..4 {
@@ -208,7 +210,9 @@ fn evaluate(board: &Board) -> f64 {
                 let dc = (positions[i].1 as i32 - positions[j].1 as i32).abs();
                 if dr + dc != 1 {
                     let lv = log2v(v1);
-                    scatter_penalty -= lv * lv * 2000.0;
+                    // Extra harsh for half-max tiles (e.g., two 256s when max is 512)
+                    let base = if v1 == half_mt { 4000.0 } else { 2000.0 };
+                    scatter_penalty -= lv * lv * base;
                 }
             }
         }
