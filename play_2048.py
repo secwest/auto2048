@@ -784,6 +784,7 @@ def play_ai(driver):
     prev_board = None
     won = False
     tracked_board = None  # Computed board state — more reliable than pixels
+    prev_tracked_ref = None  # Last known good tracking for gold tile recovery
 
     def dismiss_dialogs():
         """Close any popup/modal/overlay/ad that might be blocking input.
@@ -884,8 +885,13 @@ def play_ai(driver):
         if tracked_board is not None:
             board = [row[:] for row in tracked_board]
         else:
-            board = pixel_board
-            tracked_board = [row[:] for row in pixel_board]
+            # Bootstrap — use reconcile to preserve gold tile values
+            if prev_tracked_ref is not None and pixel_board:
+                board = reconcile_board(prev_tracked_ref, pixel_board)
+            else:
+                board = pixel_board
+            if board:
+                tracked_board = [row[:] for row in board]
 
         # ── Stuck detection (use pixel board to avoid tracking feedback loop) ──
         if pixel_board == prev_board:
@@ -897,7 +903,7 @@ def play_ai(driver):
                 time.sleep(0.5)
                 pixel_board = read_board(driver)
                 if pixel_board and pixel_board != prev_board:
-                    tracked_board = None
+                    # Board changed on re-read — keep tracking intact
                     same_count = 0
                     continue
             if same_count > 4 and same_count <= 8:
@@ -918,7 +924,26 @@ def play_ai(driver):
                     new_board = read_board(driver)
                     if new_board and new_board != pixel_board:
                         any_moved = True
-                        tracked_board = None
+                        # Try to maintain tracking through recovery
+                        if tracked_board is not None:
+                            exp, _, sm = simulate_move(tracked_board, d)
+                            if sm:
+                                spawns = [(r, c)
+                                          for r in range(4) for c in range(4)
+                                          if exp[r][c] == 0
+                                          and new_board[r][c] in (2, 4)]
+                                if spawns:
+                                    for r, c in spawns:
+                                        exp[r][c] = new_board[r][c]
+                                    tracked_board = exp
+                                else:
+                                    if tracked_board is not None:
+                                        prev_tracked_ref = [row[:] for row in tracked_board]
+                                    tracked_board = None
+                            else:
+                                if tracked_board is not None:
+                                    prev_tracked_ref = [row[:] for row in tracked_board]
+                                tracked_board = None
                         move_num += 1
                         same_count = 0
                         break
@@ -930,6 +955,8 @@ def play_ai(driver):
                 if charges[0] > 0:
                     print(f"  ⚡ UNDO to escape stuck state")
                     use_undo(driver)
+                    if tracked_board is not None:
+                        prev_tracked_ref = [row[:] for row in tracked_board]
                     tracked_board = None
                     same_count = 0
                     time.sleep(0.5)
@@ -941,6 +968,8 @@ def play_ai(driver):
                         print(f"  ⚡ DELETE {val} tiles (charge left) "
                               f"to avoid game over")
                         use_delete(driver, dr, dc)
+                        if tracked_board is not None:
+                            prev_tracked_ref = [row[:] for row in tracked_board]
                         tracked_board = None
                         same_count = 0
                         continue
@@ -1055,12 +1084,17 @@ def play_ai(driver):
                     result[r][c] = new_board[r][c]
                 new_board = result
             else:
-                # No new tile found where expected — state may have drifted
-                # Fall back to pixel reading
-                tracked_board = None
-                new_board = read_board(driver)
+                # No new tile found — use reconcile to preserve gold values
+                fresh = read_board(driver)
+                if fresh:
+                    new_board = reconcile_board(expected_board, fresh)
+                else:
+                    new_board = [row[:] for row in expected_board]
         elif new_board and tracked_board is None:
-            pass  # Bootstrapping — just use pixel board as-is
+            # Bootstrapping — use reconcile if we have a previous reference
+            if prev_tracked_ref is not None:
+                new_board = reconcile_board(prev_tracked_ref, new_board)
+            # else just use pixel board as-is
 
         # ── Post-move evaluation → possible undo ──
         if new_board and should_undo(board, new_board, moves):
@@ -1071,12 +1105,16 @@ def play_ai(driver):
                       f"{alt_dir}  [undo left: {charges[0]-1}]")
                 use_undo(driver)
                 # After undo, reset tracking — re-read from pixels
+                if tracked_board is not None:
+                    prev_tracked_ref = [row[:] for row in tracked_board]
                 tracked_board = None
                 send_key(driver, alt_dir)
                 time.sleep(MOVE_DELAY)
                 new_board = read_board(driver)
                 if new_board:
-                    tracked_board = new_board
+                    if prev_tracked_ref is not None:
+                        new_board = reconcile_board(prev_tracked_ref, new_board)
+                    tracked_board = [row[:] for row in new_board]
 
         # Update tracked state
         if new_board:
@@ -1100,6 +1138,8 @@ def play_ai(driver):
                             print(f"  ⚡ PROACTIVE DELETE {info[0]} "
                                   f"(empty={ec_new}, charges={charges[2]})")
                             if use_delete(driver, info[1], info[2]):
+                                if tracked_board is not None:
+                                    prev_tracked_ref = [row[:] for row in tracked_board]
                                 tracked_board = None
                                 time.sleep(MOVE_DELAY)
                                 continue
