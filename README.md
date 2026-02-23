@@ -34,8 +34,8 @@ on Windows).
 └───────┬───────┘                      └────────────────────┘
         │ WebDriver
         ▼
-┌───────────────┐
-│    Chrome      │  Merge2048 (play2048.co)
+┌────────────────┐
+│     Chrome     │  Merge2048 (play2048.co)
 │  (WebGL/PixiJS │  Svelte SPA
 │    canvas)     │
 └────────────────┘
