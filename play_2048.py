@@ -954,25 +954,26 @@ def play_ai(driver):
                 charges = get_charges(driver)
                 if charges[0] > 0:
                     print(f"  ⚡ UNDO to escape stuck state")
-                    use_undo(driver)
-                    if tracked_board is not None:
-                        prev_tracked_ref = [row[:] for row in tracked_board]
-                    tracked_board = None
-                    same_count = 0
-                    time.sleep(0.5)
-                    continue
+                    if use_undo(driver):
+                        if tracked_board is not None:
+                            prev_tracked_ref = [row[:] for row in tracked_board]
+                        tracked_board = None
+                        same_count = 0
+                        time.sleep(0.5)
+                        continue
                 if charges[2] > 0:
                     info = find_best_delete(board)
                     if info:
                         val, dr, dc = info
                         print(f"  ⚡ DELETE {val} tiles (charge left) "
                               f"to avoid game over")
-                        use_delete(driver, dr, dc)
-                        if tracked_board is not None:
-                            prev_tracked_ref = [row[:] for row in tracked_board]
-                        tracked_board = None
-                        same_count = 0
-                        continue
+                        if use_delete(driver, dr, dc):
+                            if tracked_board is not None:
+                                prev_tracked_ref = [row[:] for row in tracked_board]
+                            tracked_board = None
+                            same_count = 0
+                            continue
+                        # Delete failed — don't reset same_count
             if same_count > 12:
                 # Truly dead — no recovery after 12 iterations
                 mt = max_tile(board)
@@ -1032,16 +1033,24 @@ def play_ai(driver):
         think_ms = (time.time() - t0) * 1000
 
         if not moves:
-            # No valid moves — try power-ups
+            # No valid moves — try power-ups (only once, avoid loop)
             charges = get_charges(driver)
-            if charges[2] > 0:
+            if charges[2] > 0 and same_count < 3:
                 info = find_best_delete(board)
                 if info:
                     val, dr, dc = info
                     print(f"  ⚡ DELETE {val} tiles — no moves available")
-                    use_delete(driver, dr, dc)
-                    continue
-            print_board(board, f"GAME OVER — {move_num} moves, best: {mt}")
+                    if use_delete(driver, dr, dc):
+                        if tracked_board is not None:
+                            prev_tracked_ref = [row[:] for row in tracked_board]
+                        tracked_board = None
+                        continue
+            # Delete failed or unavailable — this is truly game over
+            mt = max_tile(board)
+            print(f"\n{'='*48}")
+            print(f"  GAME OVER — Best tile: {mt}  Moves: {move_num}")
+            print(f"{'='*48}")
+            print_board(board, "Final board")
             return
 
         direction = moves[0][1]
