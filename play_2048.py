@@ -803,6 +803,7 @@ def play_ai(driver):
     tracked_board = None  # Computed board state — more reliable than pixels
     prev_tracked_ref = None  # Last known good tracking for gold tile recovery
     focus_retries = 0  # Track how many times we've retried focus recovery
+    page_refresh_count = 0  # Track page refreshes for key dispatch recovery
 
     def dismiss_dialogs():
         """Close any popup/modal/overlay/ad that might be blocking input.
@@ -1035,6 +1036,8 @@ def play_ai(driver):
                         break
                 if any_moved:
                     continue
+                # All directions failed — don't fall through to search
+                continue
             if same_count > 8 and same_count <= 15:
                 # Try power-ups only in the first few stuck cycles
                 charges = get_charges(driver)
@@ -1125,6 +1128,32 @@ def play_ai(driver):
                         print(f"  ActionChains fallback failed: {e}")
                     same_count = 5
                     continue
+                # Last resort: page refresh to reset JS event handlers
+                if has_valid and page_refresh_count < 2:
+                    page_refresh_count += 1
+                    print(f"  🔄 Page refresh {page_refresh_count}/2 — "
+                          f"resetting event handlers")
+                    try:
+                        driver.refresh()
+                        time.sleep(3)
+                        dismiss_dialogs()
+                        time.sleep(1)
+                        # Re-read board after refresh
+                        nb = read_board(driver)
+                        if nb:
+                            # Restore tracked board via reconcile
+                            if tracked_board is not None:
+                                nb = reconcile_board(tracked_board, nb)
+                            tracked_board = [row[:] for row in nb]
+                            board = [row[:] for row in nb]
+                            pixel_board = nb
+                            prev_board = [row[:] for row in nb]
+                            same_count = 0
+                            focus_retries = 0
+                            print(f"  ✓ Page refreshed — board restored")
+                            continue
+                    except Exception as e:
+                        print(f"  Page refresh failed: {e}")
                 # Truly dead — no recovery possible
                 mt = max_tile(board)
                 print(f"\n{'='*48}")
