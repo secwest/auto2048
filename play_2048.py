@@ -691,6 +691,95 @@ def find_best_delete(board):
 
 # ── Main game loop ────────────────────────────────────────────────
 
+def kill_ads(driver):
+    """Aggressively remove all ad elements, video players, and overlays."""
+    try:
+        driver.execute_script("""
+            // Remove iframes (ad containers)
+            document.querySelectorAll('iframe').forEach(f => f.remove());
+            // Remove elements with ad-related ids/classes
+            document.querySelectorAll(
+                '[id*="ad"], [id*="Ad"], [id*="AD"], [class*="ad-"], ' +
+                '[class*="Ad-"], [id*="google_ads"], [id*="aswift"], ' +
+                '[class*="overlay"], [class*="preroll"], [class*="video-ad"], ' +
+                '[id*="player"], [class*="player"], [class*="sponsored"], ' +
+                '[id*="banner"], [class*="banner"], [data-ad], ' +
+                '[class*="interstitial"], [id*="interstitial"]'
+            ).forEach(el => {
+                if (!el.closest('canvas') && !el.querySelector('canvas') &&
+                    el.tagName !== 'CANVAS')
+                    el.remove();
+            });
+            // Remove video elements that aren't part of the game
+            document.querySelectorAll('video').forEach(v => v.remove());
+            // Remove high-z-index overlays
+            document.querySelectorAll('div').forEach(d => {
+                var s = window.getComputedStyle(d);
+                if ((s.position === 'fixed' || s.position === 'absolute') &&
+                    parseInt(s.zIndex) > 100 &&
+                    !d.querySelector('canvas') &&
+                    d.tagName !== 'CANVAS') {
+                    var w = d.offsetWidth, h = d.offsetHeight;
+                    var ww = window.innerWidth, wh = window.innerHeight;
+                    if ((w > ww * 0.3 && h > wh * 0.2) ||
+                        d.querySelector('video') ||
+                        d.querySelector('iframe')) {
+                        d.remove();
+                    }
+                }
+            });
+        """)
+    except Exception:
+        pass
+
+
+def close_video_ad(driver):
+    """Find and click close buttons on video ad widgets."""
+    try:
+        buttons = driver.find_elements(By.CSS_SELECTOR,
+            "button, [role='button'], .close, [class*='close'], "
+            "[class*='Close'], [aria-label*='close'], [aria-label*='Close']")
+        for btn in buttons:
+            try:
+                if not btn.is_displayed():
+                    continue
+                w, h = btn.size["width"], btn.size["height"]
+                if 10 <= w <= 50 and 10 <= h <= 50:
+                    loc = btn.location
+                    canvas_els = driver.find_elements(By.CSS_SELECTOR, "canvas")
+                    if canvas_els:
+                        canvas_bottom = canvas_els[0].location["y"] + \
+                                       canvas_els[0].size["height"]
+                        if loc["y"] > canvas_bottom - 50:
+                            btn.click()
+                            print("  ✓ Closed video ad")
+                            time.sleep(0.3)
+                            return True
+            except Exception:
+                continue
+        driver.execute_script("""
+            var canvas = document.querySelector('canvas');
+            if (!canvas) return;
+            var cb = canvas.getBoundingClientRect().bottom;
+            document.querySelectorAll('button, [role="button"]').forEach(b => {
+                var r = b.getBoundingClientRect();
+                if (r.top > cb - 50 && r.width < 50 && r.height < 50 &&
+                    r.width > 5 && r.height > 5) {
+                    var text = (b.textContent || '').trim().toLowerCase();
+                    var label = (b.getAttribute('aria-label') || '').toLowerCase();
+                    if (text === 'x' || text === '×' || text === '✕' ||
+                        text === '' || label.includes('close') ||
+                        b.className.toLowerCase().includes('close')) {
+                        b.click();
+                    }
+                }
+            });
+        """)
+    except Exception:
+        pass
+    return False
+
+
 def main():
     print("Starting 2048 AI…\n")
     options = webdriver.ChromeOptions()
@@ -701,102 +790,7 @@ def main():
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
     driver = webdriver.Chrome(options=options)
-    driver.set_script_timeout(10)  # prevent hanging on execute_script
-
-    def kill_ads():
-        """Aggressively remove all ad elements, video players, and overlays."""
-        try:
-            driver.execute_script("""
-                // Remove iframes (ad containers)
-                document.querySelectorAll('iframe').forEach(f => f.remove());
-                // Remove elements with ad-related ids/classes
-                document.querySelectorAll(
-                    '[id*="ad"], [id*="Ad"], [id*="AD"], [class*="ad-"], ' +
-                    '[class*="Ad-"], [id*="google_ads"], [id*="aswift"], ' +
-                    '[class*="overlay"], [class*="preroll"], [class*="video-ad"], ' +
-                    '[id*="player"], [class*="player"], [class*="sponsored"], ' +
-                    '[id*="banner"], [class*="banner"], [data-ad], ' +
-                    '[class*="interstitial"], [id*="interstitial"]'
-                ).forEach(el => {
-                    if (!el.closest('canvas') && !el.querySelector('canvas') &&
-                        el.tagName !== 'CANVAS')
-                        el.remove();
-                });
-                // Remove video elements that aren't part of the game
-                document.querySelectorAll('video').forEach(v => v.remove());
-                // Remove high-z-index overlays
-                document.querySelectorAll('div').forEach(d => {
-                    var s = window.getComputedStyle(d);
-                    if ((s.position === 'fixed' || s.position === 'absolute') &&
-                        parseInt(s.zIndex) > 100 &&
-                        !d.querySelector('canvas') &&
-                        d.tagName !== 'CANVAS') {
-                        // Check if it looks like an ad container
-                        var w = d.offsetWidth, h = d.offsetHeight;
-                        var ww = window.innerWidth, wh = window.innerHeight;
-                        // Large overlay or small video box in corner
-                        if ((w > ww * 0.3 && h > wh * 0.2) ||
-                            d.querySelector('video') ||
-                            d.querySelector('iframe')) {
-                            d.remove();
-                        }
-                    }
-                });
-            """)
-        except Exception:
-            pass
-
-    def close_video_ad():
-        """Find and click close buttons on video ad widgets."""
-        try:
-            # Look for small close buttons (X) on video ad overlays
-            buttons = driver.find_elements(By.CSS_SELECTOR,
-                "button, [role='button'], .close, [class*='close'], "
-                "[class*='Close'], [aria-label*='close'], [aria-label*='Close']")
-            for btn in buttons:
-                try:
-                    if not btn.is_displayed():
-                        continue
-                    w, h = btn.size["width"], btn.size["height"]
-                    # Small close button (typical X button is 15-40px)
-                    if 10 <= w <= 50 and 10 <= h <= 50:
-                        # Check it's in the lower part of the screen (near power-ups)
-                        loc = btn.location
-                        canvas_els = driver.find_elements(By.CSS_SELECTOR, "canvas")
-                        if canvas_els:
-                            canvas_bottom = canvas_els[0].location["y"] + \
-                                           canvas_els[0].size["height"]
-                            # Below or near the canvas bottom (ad area)
-                            if loc["y"] > canvas_bottom - 50:
-                                btn.click()
-                                print("  ✓ Closed video ad")
-                                time.sleep(0.3)
-                                return True
-                except Exception:
-                    continue
-            # Also try JS-based close for elements that might be in shadow DOM
-            driver.execute_script("""
-                // Find close buttons near bottom of page
-                var canvas = document.querySelector('canvas');
-                if (!canvas) return;
-                var cb = canvas.getBoundingClientRect().bottom;
-                document.querySelectorAll('button, [role="button"]').forEach(b => {
-                    var r = b.getBoundingClientRect();
-                    if (r.top > cb - 50 && r.width < 50 && r.height < 50 &&
-                        r.width > 5 && r.height > 5) {
-                        var text = (b.textContent || '').trim().toLowerCase();
-                        var label = (b.getAttribute('aria-label') || '').toLowerCase();
-                        if (text === 'x' || text === '×' || text === '✕' ||
-                            text === '' || label.includes('close') ||
-                            b.className.toLowerCase().includes('close')) {
-                            b.click();
-                        }
-                    }
-                });
-            """)
-        except Exception:
-            pass
-        return False
+    driver.set_script_timeout(10)
 
     try:
         driver.get(URL)
@@ -805,8 +799,8 @@ def main():
 
         # Aggressively kill ads during initial load
         for _ in range(5):
-            kill_ads()
-            close_video_ad()
+            kill_ads(driver)
+            close_video_ad(driver)
             time.sleep(1)
 
         # Dismiss welcome banner — click the small round X close button,
@@ -908,8 +902,8 @@ def play_ai(driver):
 
     def dismiss_dialogs():
         """Close any popup/modal/overlay/ad that might be blocking input."""
-        kill_ads()
-        close_video_ad()
+        kill_ads(driver)
+        close_video_ad(driver)
         try:
             for sel in ["[class*='keep']", "[class*='continu']", "[class*='retry']",
                         "[class*='try-again']"]:
@@ -1440,8 +1434,8 @@ def play_ai(driver):
         # ── Periodic focus refresh and ad dismissal ──
         refresh_interval = 5 if mt >= 512 else 10
         if move_num % refresh_interval == 0:
-            kill_ads()
-            close_video_ad()
+            kill_ads(driver)
+            close_video_ad(driver)
             try:
                 canvas = driver.find_elements(By.CSS_SELECTOR, "canvas")
                 if canvas and canvas[0].is_displayed():
