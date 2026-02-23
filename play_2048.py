@@ -785,6 +785,7 @@ def play_ai(driver):
     won = False
     tracked_board = None  # Computed board state — more reliable than pixels
     prev_tracked_ref = None  # Last known good tracking for gold tile recovery
+    focus_retries = 0  # Track how many times we've retried focus recovery
 
     def dismiss_dialogs():
         """Close any popup/modal/overlay/ad that might be blocking input.
@@ -841,27 +842,55 @@ def play_ai(driver):
         Trust computed state for gold tiles (128-2048) where color reading
         is unreliable. Trust pixels for new random tiles (2/4) and
         non-gold tiles. Returns corrected board.
+        
+        If expected max tile is higher than actual max tile, try to
+        find the misread tile and upgrade it (e.g., 1024 misread as 512).
         """
         if expected is None or actual is None:
             return actual
-        corrected = [row[:] for row in expected]
+        exp_max = max(expected[r][c] for r in range(4) for c in range(4))
+        act_max = max(actual[r][c] for r in range(4) for c in range(4))
+        
+        # If boards have same layout (tiles haven't moved), do cell-by-cell
+        corrected = [row[:] for row in actual]
         for r in range(4):
             for c in range(4):
                 e, a = expected[r][c], actual[r][c]
                 if e == a:
                     continue
-                if e == 0 and a in (2, 4):
-                    # New random tile spawned — trust pixels
-                    corrected[r][c] = a
-                elif e == 0 and a > 0:
-                    # Unexpected tile where empty expected — trust pixels
-                    corrected[r][c] = a
-                elif e >= 128 and a >= 128:
-                    # Gold tile disagreement — trust computation
+                if e >= 128 and a >= 128 and e == a * 2:
+                    # Gold tile likely misread as half value — trust expected
                     corrected[r][c] = e
-                else:
-                    # Other disagreement — trust pixels
+                elif e >= 128 and a >= 128 and a == e * 2:
+                    # Pixel reads higher — trust pixel (could be valid merge)
                     corrected[r][c] = a
+        
+        # If expected had a higher max tile than what we see, try to fix
+        if exp_max > act_max and exp_max >= 256:
+            # Find the best candidate in actual: a gold tile that's exactly
+            # half the expected max (common misread: 1024→512, 512→256)
+            half_val = exp_max // 2
+            # Count how many of each value exist
+            exp_count = {}
+            act_count = {}
+            for r in range(4):
+                for c in range(4):
+                    v = expected[r][c]
+                    if v > 0:
+                        exp_count[v] = exp_count.get(v, 0) + 1
+                    v = actual[r][c]
+                    if v > 0:
+                        act_count[v] = act_count.get(v, 0) + 1
+            # If actual has more of the half-value than expected, one is misread
+            if act_count.get(half_val, 0) > exp_count.get(half_val, 0):
+                # Upgrade one instance of half_val to exp_max
+                for r in range(4):
+                    for c in range(4):
+                        if corrected[r][c] == half_val:
+                            corrected[r][c] = exp_max
+                            print(f"  🔧 Reconcile: upgraded {half_val}→{exp_max} at ({r},{c})")
+                            break
+        
         return corrected
 
     try:
@@ -908,6 +937,21 @@ def play_ai(driver):
                     continue
             if same_count > 4 and same_count <= 8:
                 if same_count == 5:
+                    # Check for tracking divergence early
+                    if tracked_board is not None and pixel_board:
+                        t_empties = {(r,c) for r in range(4) for c in range(4)
+                                     if tracked_board[r][c] == 0}
+                        p_empties = {(r,c) for r in range(4) for c in range(4)
+                                     if pixel_board[r][c] == 0}
+                        mismatch = len(t_empties.symmetric_difference(p_empties))
+                        if mismatch >= 1:
+                            print(f"  ⚠ Tracking divergence detected early "
+                                  f"({mismatch} empty mismatches) — resetting")
+                            prev_tracked_ref = [row[:] for row in tracked_board]
+                            tracked_board = [row[:] for row in pixel_board]
+                            board = [row[:] for row in pixel_board]
+                            same_count = 0
+                            continue
                     try:
                         colors = driver.execute_script(JS_READ_BOARD)
                         if colors:
@@ -983,18 +1027,29 @@ def play_ai(driver):
                             continue
                         # Delete failed — don't reset same_count
             if same_count > 12:
-                # Check if game is truly over or just key dispatch failure
+                # Check for tracking divergence before declaring game over
+                if tracked_board is not None and pixel_board:
+                    t_empties = {(r,c) for r in range(4) for c in range(4)
+                                 if tracked_board[r][c] == 0}
+                    p_empties = {(r,c) for r in range(4) for c in range(4)
+                                 if pixel_board[r][c] == 0}
+                    mismatch = len(t_empties.symmetric_difference(p_empties))
+                    if mismatch >= 1:
+                        print(f"  ⚠ Tracking divergence: {mismatch} empty-cell "
+                              f"mismatches — resetting to pixel board")
+                        prev_tracked_ref = [row[:] for row in tracked_board]
+                        tracked_board = [row[:] for row in pixel_board]
+                        board = [row[:] for row in pixel_board]
+                        same_count = 0
+                        focus_retries = 0
+                        continue
                 has_valid = any(simulate_move(board, d)[2] for d in DIRECTIONS)
-                if has_valid and same_count <= 25:
-                    # Board has valid moves — key dispatch failing, not game over
-                    # Try clicking canvas to regain focus and retry
+                if has_valid and focus_retries < 3:
+                    focus_retries += 1
+                    print(f"  🔄 Focus retry {focus_retries}/3 — valid moves exist")
                     dismiss_dialogs()
                     time.sleep(1.0)
-                    # Force re-read from pixels
-                    if tracked_board is not None:
-                        prev_tracked_ref = [row[:] for row in tracked_board]
-                    tracked_board = None
-                    same_count = 5  # Reset to try recovery again
+                    same_count = 5
                     continue
                 # Truly dead — no recovery possible
                 mt = max_tile(board)
@@ -1005,6 +1060,7 @@ def play_ai(driver):
                 return
         else:
             same_count = 0
+            focus_retries = 0
         prev_board = [row[:] for row in pixel_board]
 
         mt = max_tile(board)

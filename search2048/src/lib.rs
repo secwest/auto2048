@@ -164,8 +164,9 @@ fn evaluate(board: &Board) -> f64 {
     let empty_score = match empty {
         0  => -800000.0,
         1  => 3000.0,
-        2  => 12000.0,
-        _  => empty as f64 * empty as f64 * 2000.0,
+        2  => 15000.0,
+        3  => 30000.0,
+        _  => 30000.0 + (empty - 3) as f64 * 10000.0,
     };
 
     // 3) Max tile in corner
@@ -256,7 +257,7 @@ fn evaluate(board: &Board) -> f64 {
     }
 
     // 7) Merge potential — adjacent equal tiles (weighted by value)
-    //    Stronger bonus for high-value merges (512+512, 256+256, etc.)
+    //    Extra bonus for "strategic merges" — tiles half the max tile value
     let mut merges = 0.0;
     for r in 0..4 {
         for c in 0..4 {
@@ -264,8 +265,10 @@ fn evaluate(board: &Board) -> f64 {
             if v == 0 { continue; }
             let lv = log2v(v);
             let weight = if v >= 256 { lv * lv * lv } else { lv * lv };
-            if c + 1 < 4 && board[r][c + 1] == v { merges += weight; }
-            if r + 1 < 4 && board[r + 1][c] == v { merges += weight; }
+            // Extra bonus for merging tiles that are half the max tile
+            let strategic = if v == mt / 2 { 2.0 } else { 1.0 };
+            if c + 1 < 4 && board[r][c + 1] == v { merges += weight * strategic; }
+            if r + 1 < 4 && board[r + 1][c] == v { merges += weight * strategic; }
         }
     }
 
