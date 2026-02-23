@@ -972,8 +972,10 @@ def play_ai(driver):
                             print(f"  ⚠ Tracking divergence: {empty_mismatch} empty "
                                   f"mismatches, {val_mismatches} value mismatches")
                             prev_tracked_ref = [row[:] for row in tracked_board]
-                            tracked_board = [row[:] for row in pixel_board]
-                            board = [row[:] for row in pixel_board]
+                            # Use reconcile to preserve gold tile values
+                            corrected = reconcile_board(tracked_board, pixel_board)
+                            tracked_board = [row[:] for row in corrected]
+                            board = [row[:] for row in corrected]
                             same_count = 0
                             continue
                     try:
@@ -1076,8 +1078,9 @@ def play_ai(driver):
                         print(f"  ⚠ Tracking divergence: {empty_mismatch} empty, "
                               f"{val_mismatches} value mismatches — resetting")
                         prev_tracked_ref = [row[:] for row in tracked_board]
-                        tracked_board = [row[:] for row in pixel_board]
-                        board = [row[:] for row in pixel_board]
+                        corrected = reconcile_board(tracked_board, pixel_board)
+                        tracked_board = [row[:] for row in corrected]
+                        board = [row[:] for row in corrected]
                         same_count = 0
                         focus_retries = 0
                         continue
