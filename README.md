@@ -1,7 +1,8 @@
-# auto2048 — AI that Wins 2048 at play2048.co
+# auto2048 — AI that Wins Merge2048
 
-An autonomous Python + Rust bot that opens a browser, plays the sliding-tile
-puzzle at [play2048.co](https://play2048.co/), and reaches the 2048 tile.
+An autonomous Python + Rust bot that opens a browser, plays
+[Merge2048](https://play2048.co/) (the sliding-tile puzzle at play2048.co),
+and reaches the 2048 tile.
 It reads the board by sampling pixel colours from a **PixiJS WebGL canvas**,
 runs expectimax search through a compiled **Rust DLL** for speed, and
 strategically uses the game's three **power-up buttons** (undo, swap, delete)
@@ -34,7 +35,7 @@ on Windows).
        │  WebDriver
        ▼
 ┌──────────────┐
-│   Chrome      │   play2048.co
+│   Chrome      │   Merge2048 (play2048.co)
 │  (WebGL/PixiJS│   Svelte SPA
 │   canvas)     │
 └──────────────┘
@@ -59,7 +60,7 @@ of every significant step.
 **Goal:** Open a browser and make any moves at all.
 
 1. **Selenium scaffolding** — `pip install selenium`, Chrome WebDriver setup,
-   open `https://play2048.co/`.
+   open Merge2048 at `https://play2048.co/`.
 2. **DOM tile reading failed** — the site is a modern Svelte SPA that renders
    the entire game board via **PixiJS on a WebGL `<canvas>`**.  There are *no*
    DOM elements for individual tiles; no `window.app` game-state object; no
@@ -75,7 +76,7 @@ of every significant step.
    ```
 4. **Colour-to-value mapping** — a `TILE_COLORS` dictionary maps each RGB
    triple to its tile value.  Initial palette came from the classic open-source
-   2048 but had to be updated to match play2048.co's different colour scheme.
+   2048 but had to be updated to match Merge2048's different colour scheme.
 5. **Corner strategy** — a simple heuristic ("always press down, left, down,
    left …") got the bot playing its first 294 moves.
 
@@ -123,7 +124,7 @@ of every significant step.
 15. **Never press Escape** — discovered the hard way that `Escape` opens the
     game's pause menu, freezing play.  All code paths audited to remove it.
 16. **`--disable-gpu` breaks WebGL** — this Chrome flag disables the GPU
-    process, but play2048.co *requires* WebGL for PixiJS rendering.  Removing
+    process, but Merge2048 *requires* WebGL for PixiJS rendering.  Removing
     it fixed canvas crashes.
 17. **Memory leak** — creating a new offscreen `<canvas>` every board read
     leaked memory.  Fix: cache the canvas in `window._offCanvas`.
@@ -167,7 +168,7 @@ of every significant step.
 
 28. **Symptom** — the game consistently reached 512 but then died with two
     adjacent tiles both reading as 512, which should merge but don't.
-29. **Root cause** — play2048.co's gold-tile colours (128–2048) are very close
+29. **Root cause** — Merge2048's gold-tile colours (128–2048) are very close
     in RGB space and **vary by board position** due to PixiJS rendering:
     | Tile | R | G | B (nominal) | B (observed range) |
     |------|---|---|-------------|-------------------|
@@ -237,7 +238,7 @@ of every significant step.
 
 ### Why pixel reading instead of DOM/API?
 
-play2048.co uses PixiJS on a WebGL canvas with Svelte.  There are *no* DOM
+Merge2048 (play2048.co) uses PixiJS on a WebGL canvas with Svelte.  There are *no* DOM
 nodes for tiles, no accessible `window.game` object, and the game state lives
 inside Svelte closures and a Web Worker.  Canvas pixel sampling was the only
 reliable way to read the board.

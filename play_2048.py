@@ -1,10 +1,12 @@
 """
-2048 Game Automation — Winning AI with power-up support.
+Merge2048 Game Automation — Winning AI with power-up support.
 
 Reads the board by sampling tile colours from the PixiJS canvas, uses
 expectimax search (with chance nodes) and a balanced evaluation function,
 and leverages the game's three power-ups (undo, swap, delete) when in
 trouble to push past difficult positions.
+
+Game: https://play2048.co/
 """
 
 import os
