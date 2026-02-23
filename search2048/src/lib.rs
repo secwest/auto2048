@@ -145,6 +145,18 @@ fn simulate_move(board: &Board, dir: u8) -> (Board, f64, bool) {
     (nb, total, moved)
 }
 
+/// Check if any adjacent cells have equal values (merge possible)
+fn has_adjacent_merges(board: &Board) -> bool {
+    for r in 0..4 {
+        for c in 0..4 {
+            if board[r][c] == 0 { continue; }
+            if c + 1 < 4 && board[r][c] == board[r][c + 1] { return true; }
+            if r + 1 < 4 && board[r][c] == board[r + 1][c] { return true; }
+        }
+    }
+    false
+}
+
 fn evaluate(board: &Board) -> f64 {
     // 1) Snake pattern — best of 8 orientations, steep geometric gradient
     let mut snake = f64::NEG_INFINITY;
@@ -159,10 +171,11 @@ fn evaluate(board: &Board) -> f64 {
         if s > snake { snake = s; }
     }
 
-    // 2) Empty cells — critical for survival; steeper penalty near zero
+    // 2) Empty cells — critical for survival
     let empty: usize = board.iter().flatten().filter(|&&v| v == 0).count();
+    let has_merges = has_adjacent_merges(board);
     let empty_score = match empty {
-        0  => -800000.0,
+        0  => if has_merges { -200000.0 } else { -800000.0 },
         1  => 3000.0,
         2  => 15000.0,
         3  => 30000.0,
@@ -177,7 +190,6 @@ fn evaluate(board: &Board) -> f64 {
     let corner_score = if in_corner {
         mt_log * mt_log * 800.0
     } else {
-        // Check if at least on an edge
         let on_edge =
             (0..4).any(|c| board[0][c] == mt) ||
             (0..4).any(|c| board[3][c] == mt) ||
@@ -188,7 +200,6 @@ fn evaluate(board: &Board) -> f64 {
     };
 
     // 4) Scatter penalty — non-adjacent duplicate high tiles
-    //    Extra harsh for tiles half the max (critical merge candidates)
     let mut scatter_penalty = 0.0;
     let half_mt = mt / 2;
     let mut positions: [(usize, usize); 16] = [(0, 0); 16];
@@ -210,7 +221,6 @@ fn evaluate(board: &Board) -> f64 {
                 let dc = (positions[i].1 as i32 - positions[j].1 as i32).abs();
                 if dr + dc != 1 {
                     let lv = log2v(v1);
-                    // Extra harsh for half-max tiles (e.g., two 256s when max is 512)
                     let base = if v1 == half_mt { 5000.0 } else { 3000.0 };
                     scatter_penalty -= lv * lv * base;
                 }
@@ -261,7 +271,6 @@ fn evaluate(board: &Board) -> f64 {
     }
 
     // 7) Merge potential — adjacent equal tiles (weighted by value)
-    //    Extra bonus for "strategic merges" — tiles half the max tile value
     let mut merges = 0.0;
     for r in 0..4 {
         for c in 0..4 {
@@ -269,9 +278,6 @@ fn evaluate(board: &Board) -> f64 {
             if v == 0 { continue; }
             let lv = log2v(v);
             let weight = if v >= 256 { lv * lv * lv } else { lv * lv };
-            // Extra bonus for strategic merges:
-            // - tiles matching max tile (merging creates new max): 5x
-            // - tiles half the max (next critical merge): 3x
             let strategic = if v == mt { 5.0 } else if v == mt / 2 { 3.0 } else { 1.0 };
             if c + 1 < 4 && board[r][c + 1] == v { merges += weight * strategic; }
             if r + 1 < 4 && board[r + 1][c] == v { merges += weight * strategic; }
@@ -279,14 +285,11 @@ fn evaluate(board: &Board) -> f64 {
     }
 
     // 8) Chain bonus — reward descending neighbors from the max tile
-    //    e.g. 1024→512→256→128 in adjacent cells
     let mut chain_bonus = 0.0;
     if in_corner && mt >= 64 {
-        // Find corner with max tile
         let corner_pos: [(usize, usize); 4] = [(0,0), (0,3), (3,0), (3,3)];
         for &(cr, cc) in &corner_pos {
             if board[cr][cc] != mt { continue; }
-            // Follow chain from corner
             let mut cur_r = cr;
             let mut cur_c = cc;
             let mut cur_val = mt;
@@ -316,8 +319,43 @@ fn evaluate(board: &Board) -> f64 {
         }
     }
 
+    // 9) Second-tile adjacency — the 2nd-highest tile should be next to the max
+    let mut adj_bonus = 0.0;
+    if mt >= 128 && half_mt >= 64 {
+        let mut mt_pos = (0usize, 0usize);
+        let mut found_mt = false;
+        for r in 0..4 {
+            for c in 0..4 {
+                if board[r][c] == mt && !found_mt {
+                    mt_pos = (r, c);
+                    found_mt = true;
+                }
+            }
+        }
+        if found_mt {
+            let mut half_adjacent = false;
+            let neighbors: [(i32, i32); 4] = [(-1,0),(1,0),(0,-1),(0,1)];
+            for &(dr, dc) in &neighbors {
+                let nr = mt_pos.0 as i32 + dr;
+                let nc = mt_pos.1 as i32 + dc;
+                if nr >= 0 && nr < 4 && nc >= 0 && nc < 4 {
+                    if board[nr as usize][nc as usize] == half_mt {
+                        half_adjacent = true;
+                        break;
+                    }
+                }
+            }
+            if half_adjacent {
+                adj_bonus = mt_log * mt_log * 400.0;
+            } else {
+                adj_bonus = -(mt_log * mt_log * 800.0);
+            }
+        }
+    }
+
     snake * 5.0 + empty_score + corner_score + scatter_penalty
-        + mono * 600.0 + smooth * 250.0 + merges * 1200.0 + chain_bonus
+        + mono * 600.0 + smooth * 250.0 + merges * 1200.0
+        + chain_bonus + adj_bonus
 }
 
 fn expectimax(board: &Board, depth: u32, is_max: bool) -> f64 {
