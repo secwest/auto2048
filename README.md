@@ -43,8 +43,8 @@ on Windows).
 
 | Component | Lines | Purpose |
 |---|---|---|
-| `play_2048.py` | ~1 100 | Browser automation, canvas reading, board sim, evaluation, power-ups, game loop |
-| `search2048/src/lib.rs` | ~380 | Rust expectimax with transposition table, exported via C ABI |
+| `play_2048.py` | ~1 380 | Browser automation, canvas reading, board sim, evaluation, power-ups, game loop |
+| `search2048/src/lib.rs` | ~440 | Rust expectimax with transposition table, exported via C ABI |
 | `run_debug.py` | 25 | Wrapper that tees stdout+stderr to `game_log.txt` |
 
 ---
@@ -232,6 +232,97 @@ of every significant step.
     at 512.  The bot uses them aggressively in the mid-game (plenty of
     replenishment) and conservatively late (charges are scarce).
 
+### Phase 9 — Tracking Divergence & Stuck-Loop Fixes (Session 8)
+
+**Goal:** Fix the bot's tendency to get stuck in infinite loops or
+lose progress when tracking diverges from the actual game board.
+
+42. **Infinite focus-recovery loop** — the bot's `same_count` was resetting
+    to 5 at each focus retry, creating a cycle that never advanced to
+    game-over detection or power-up use.  Fix: added a `focus_retries`
+    counter (max 3) to prevent infinite retries.  (`846c275`)
+43. **Tracking divergence detection** — after ~500 moves, the tracked board
+    would silently diverge from the actual pixel board (usually due to a key
+    dispatch that failed silently).  The stuck-recovery code would then try
+    moves on the wrong board state, wasting power-ups and never matching.
+    Fix: at `same_count == 5`, compare tracked vs pixel empty-cell positions;
+    if symmetric-difference ≥ 1, reset tracking from pixels.  (`0b196e4`)
+44. **Value-based divergence** — empty-cell comparison alone couldn't catch
+    cases where both boards had the same number of empty cells but different
+    values (e.g., tracked shows 1024 but pixels show 256).  Added cell-value
+    mismatch counting (ignoring gold 2x misreads); divergence triggers at
+    ≥ 4 value mismatches.  (`c22dab1`)
+45. **ActionChains key fallback** — when JS `dispatchEvent` stops working
+    (after ~1000 moves), the bot now tries Selenium ActionChains
+    (click canvas + `send_keys`) as a fallback.  Added `send_key_fallback()`
+    used both in the main move loop and in focus-retry recovery.  (`112cafa`)
+46. **Board-change verification after power-ups** — DELETE/UNDO button clicks
+    could "succeed" (Selenium clicks the button) but not actually change
+    the board.  The bot would reset `same_count` and loop forever.  Fix:
+    re-read the pixel board after every power-up use and only reset
+    `same_count` if the board actually changed.  (`eec4f1c`)
+
+### Phase 10 — Gold Tile Preservation (Session 8)
+
+**Goal:** Stop losing high tiles (1024→512→256) during divergence recovery.
+
+47. **Reconcile during divergence reset** — when tracking divergence was
+    detected, the old code replaced `tracked_board` with raw `pixel_board`,
+    which misread gold tiles (e.g., 1024 shows as 256 in pixels).  Fix:
+    use `reconcile_board()` to merge tracked and pixel data, preserving
+    gold tile values from tracking.  (`e1a6534`)
+48. **Multi-level reconcile** — `reconcile_board()` originally only handled
+    2x misreads (512→256).  But gold tiles can be misread at 4x or even 8x
+    (1024→256).  Extended cell-by-cell comparison to handle 4x misreads,
+    and the count-based upgrade to try divisors of 2, 4, and 8.  (`19886a3`)
+49. **4x gold misread tolerance in divergence detection** — the divergence
+    check was counting cells as "mismatched" if values differed by more
+    than 2x.  Added `_is_gold_misread()` helper that tolerates 2x and 4x
+    differences between tracked and pixel values.  (`2049a78`)
+
+### Phase 11 — Key Dispatch Recovery & Evaluation Tuning (Session 8)
+
+**Goal:** Handle the persistent key dispatch failure that kills games
+after ~1000 moves, and improve merge strategy.
+
+50. **Page refresh recovery** — after all other stuck-recovery mechanisms
+    fail (direction probing, power-ups, ActionChains, focus retry ×3), the
+    bot now refreshes the page (up to 2 times) to reset JavaScript event
+    handlers.  Game state is preserved via localStorage.  After refresh,
+    `reconcile_board()` restores gold tile values.  (`6d62303`)
+51. **Prevent recovery fallthrough** — when stuck-recovery tries all 4
+    directions and none work, it now `continue`s to the next loop iteration
+    instead of falling through to the regular search+move code (which also
+    fails, wasting time and incrementing the move counter).  (`6d62303`)
+52. **Strategic merge bonus** — adjacent tiles equal to the max tile value
+    get a 5× merge bonus (e.g., two 512s → one 1024).  Tiles half the max
+    get a 3× bonus.  This addresses game20 where two adjacent 512s weren't
+    merged.  Merge coefficient raised from 800 to 1200.  (`5c8e5f1`)
+53. **Stronger corner discipline** — corner bonus increased (500→800 per
+    lv²), edge penalty doubled (-1000→-2000), center penalty increased
+    (-3000→-5000).  Addresses game21 where 1024 ended up at an edge
+    position instead of corner.  (`e5aec23`)
+54. **Stronger scatter penalty** — base penalty for non-adjacent duplicate
+    high tiles increased from 2000→3000, and from 4000→5000 for
+    half-max duplicates.  (`e5aec23`)
+
+### Current Status
+
+The bot consistently reaches **512–1024** from a fresh game.  It has
+achieved **2048** (the win condition) in at least one confirmed game.
+Remaining challenges:
+
+- **Key dispatch failure** — after ~1000 moves, JavaScript `dispatchEvent`
+  stops working.  Page refresh partially mitigates this but occasionally
+  resets game state.
+- **Gold tile colour ambiguity** — multi-level reconcile handles most cases
+  but tracking divergence can still cause temporary regressions.
+- **Board gridlock** — occasionally the bot fills the board early (by
+  move 50–80) due to bad tile spawns, requiring many merges to recover.
+- **Consistent 2048** — the bot reaches 1024 in most games but converting
+  to 2048 requires sustained accurate play over 500+ additional moves
+  without key dispatch failures.
+
 ---
 
 ## Key Technical Decisions
@@ -274,6 +365,27 @@ These were each discovered through a crash, freeze, or infinite loop:
 | Wrap every Selenium call in `try/except` | Browser can disconnect at any time |
 | Click power-up buttons via `execute_script("arguments[0].click()")` | Overlay divs block normal clicks |
 | Dismiss the welcome banner's **X button**, never "Play Tutorial" | Tutorial mode locks out arrow keys |
+| Save `prev_tracked_ref` before any `tracked_board = None` | Enables reconcile after tracking reset |
+| Divergence reset must use `reconcile_board()` | Raw pixel replacement loses gold tile values |
+| Verify board changed after DELETE/UNDO | Button click can succeed without effect |
+| Page refresh as last resort (max 2×) | Resets dead JS event handlers |
+
+---
+
+## Evaluation Function (Rust)
+
+The expectimax search uses an 8-component heuristic evaluation:
+
+| Component | Weight | Description |
+|---|---|---|
+| **Snake** | ×5.0 | Geometric 1.5ⁿ weights along 8 snake orientations; best of 8 used |
+| **Empty cells** | adaptive | 0 cells → −800K; 1 → 3K; 2 → 15K; 3 → 30K; 4+ → 30K + 10K×(n−3) |
+| **Corner** | +800 lv² / −2000–5000 lv² | Large bonus when max tile is in a corner; harsh penalty otherwise |
+| **Scatter** | −3000–5000 lv² | Penalises non-adjacent duplicate high tiles (≥64); extra harsh for half-max |
+| **Monotonicity** | ×600 | Rows and columns should be monotonically increasing or decreasing |
+| **Smoothness** | ×250 | Adjacent tiles should have similar log₂ values |
+| **Merges** | ×1200 | Adjacent equal tiles; cubic weight for ≥256; 5× strategic bonus for max-tile pairs, 3× for half-max |
+| **Chain** | 500 lv² per link | Descending chain bonus from corner (1024→512→256→128 etc.) |
 
 ---
 
@@ -304,6 +416,19 @@ These were each discovered through a crash, freeze, or infinite loop:
    memory leaks, overlay ads, and escape-key traps each required their own fix.
 6. **Rust FFI via ctypes is straightforward** — a `cdylib` crate with
    `#[no_mangle] pub extern "C"` functions loads cleanly in Python.
+7. **Divergence between tracking and reality is insidious** — a single missed
+   key dispatch silently corrupts the tracked state; all downstream decisions
+   are based on a board that doesn't exist.  Multi-layered detection
+   (empty-cell positions + value mismatches + gold misread tolerance) is
+   needed to catch and correct it.
+8. **Browser JS event handlers degrade over time** — after ~1000 moves,
+   `document.dispatchEvent` stops being received by the game.  The root cause
+   is unknown (garbage collection? listener detachment? anti-automation?).
+   Multiple fallback mechanisms (ActionChains, focus retry, page refresh)
+   are needed.
+9. **Merge prioritisation is critical at high tiles** — the evaluation must
+   strongly reward merging tiles equal to or half the max tile value.  Without
+   this, the AI will keep adjacent 512s separate while building elsewhere.
 
 ---
 
