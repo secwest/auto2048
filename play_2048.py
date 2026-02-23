@@ -860,53 +860,51 @@ def play_ai(driver):
         is unreliable. Trust pixels for new random tiles (2/4) and
         non-gold tiles. Returns corrected board.
         
-        If expected max tile is higher than actual max tile, try to
-        find the misread tile and upgrade it (e.g., 1024 misread as 512).
+        Handles multi-level misreads (e.g., 1024 misread as 256).
         """
         if expected is None or actual is None:
             return actual
         exp_max = max(expected[r][c] for r in range(4) for c in range(4))
         act_max = max(actual[r][c] for r in range(4) for c in range(4))
         
-        # If boards have same layout (tiles haven't moved), do cell-by-cell
         corrected = [row[:] for row in actual]
+        # Cell-by-cell: upgrade misread gold tiles (half/quarter value)
         for r in range(4):
             for c in range(4):
                 e, a = expected[r][c], actual[r][c]
                 if e == a:
                     continue
-                if e >= 128 and a >= 128 and e == a * 2:
-                    # Gold tile likely misread as half value — trust expected
-                    corrected[r][c] = e
-                elif e >= 128 and a >= 128 and a == e * 2:
-                    # Pixel reads higher — trust pixel (could be valid merge)
-                    corrected[r][c] = a
+                # Trust expected if it's 2x or 4x the actual (common misreads)
+                if e >= 128 and a >= 64:
+                    if e == a * 2 or e == a * 4:
+                        corrected[r][c] = e
+                    elif a == e * 2:
+                        corrected[r][c] = a
         
-        # If expected had a higher max tile than what we see, try to fix
+        # If expected had a higher max tile, find and upgrade misread tiles
         if exp_max > act_max and exp_max >= 256:
-            # Find the best candidate in actual: a gold tile that's exactly
-            # half the expected max (common misread: 1024→512, 512→256)
-            half_val = exp_max // 2
-            # Count how many of each value exist
-            exp_count = {}
-            act_count = {}
-            for r in range(4):
-                for c in range(4):
-                    v = expected[r][c]
-                    if v > 0:
-                        exp_count[v] = exp_count.get(v, 0) + 1
-                    v = actual[r][c]
-                    if v > 0:
-                        act_count[v] = act_count.get(v, 0) + 1
-            # If actual has more of the half-value than expected, one is misread
-            if act_count.get(half_val, 0) > exp_count.get(half_val, 0):
-                # Upgrade one instance of half_val to exp_max
-                for r in range(4):
-                    for c in range(4):
-                        if corrected[r][c] == half_val:
-                            corrected[r][c] = exp_max
-                            print(f"  🔧 Reconcile: upgraded {half_val}→{exp_max} at ({r},{c})")
-                            break
+            corr_max = max(corrected[r][c] for r in range(4) for c in range(4))
+            if corr_max < exp_max:
+                # Cell-by-cell didn't fix it — try count-based upgrade
+                # Check multiple misread levels: half, quarter, eighth
+                for divisor in [2, 4, 8]:
+                    misread_val = exp_max // divisor
+                    if misread_val < 64:
+                        break
+                    exp_count = sum(1 for r in range(4) for c in range(4)
+                                   if expected[r][c] == misread_val)
+                    corr_count = sum(1 for r in range(4) for c in range(4)
+                                    if corrected[r][c] == misread_val)
+                    if corr_count > exp_count:
+                        # One instance is a misread — upgrade it
+                        for r in range(4):
+                            for c in range(4):
+                                if corrected[r][c] == misread_val:
+                                    corrected[r][c] = exp_max
+                                    print(f"  🔧 Reconcile: upgraded "
+                                          f"{misread_val}→{exp_max} at ({r},{c})")
+                                    break
+                        break
         
         return corrected
 
