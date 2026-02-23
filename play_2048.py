@@ -944,8 +944,8 @@ def play_ai(driver):
                         tracked_board = None
                         same_count = 0
                         continue
-            if same_count > 20:
-                # Truly dead — no recovery after 20 iterations
+            if same_count > 12:
+                # Truly dead — no recovery after 12 iterations
                 mt = max_tile(board)
                 print(f"\n{'='*48}")
                 print(f"  GAME OVER — Best tile: {mt}  Moves: {move_num}")
@@ -1104,19 +1104,9 @@ def play_ai(driver):
                                 time.sleep(MOVE_DELAY)
                                 continue
 
-            # Swap: when max tile displaced from corner
-            if ec_new <= 4 and mt_new >= 128:
-                charges = get_charges(driver)
-                if charges[1] > 0 and not corner_has_max(new_board):
-                    swap = find_best_swap(new_board)
-                    if swap:
-                        r1, c1, r2, c2 = swap
-                        print(f"  ⚡ PROACTIVE SWAP ({r1},{c1})↔({r2},{c2}) "
-                              f"(mt not in corner)")
-                        if use_swap(driver, r1, c1, r2, c2):
-                            tracked_board = None
-                            time.sleep(MOVE_DELAY)
-                            continue
+            # Swap: ONLY during stuck recovery (reactive, never proactive).
+            # Proactive swap disabled — unreliable cell clicks and
+            # unpredictable game mechanics destroyed a 256 tile in testing.
 
         # ── Periodic ad/dialog dismissal (every 20 moves) ──
         if move_num % 20 == 0:

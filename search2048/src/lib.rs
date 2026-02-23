@@ -159,25 +159,34 @@ fn evaluate(board: &Board) -> f64 {
         if s > snake { snake = s; }
     }
 
-    // 2) Empty cells — critical for survival
+    // 2) Empty cells — critical for survival; steeper penalty near zero
     let empty: usize = board.iter().flatten().filter(|&&v| v == 0).count();
-    let empty_score = if empty == 0 {
-        -500000.0
-    } else {
-        empty as f64 * empty as f64 * 2000.0
+    let empty_score = match empty {
+        0  => -800000.0,
+        1  => 3000.0,
+        2  => 12000.0,
+        _  => empty as f64 * empty as f64 * 2000.0,
     };
 
-    // 3) Max tile in corner — incentive (reduced since snake weights cover this)
+    // 3) Max tile in corner
     let mt = *board.iter().flatten().max().unwrap();
     let mt_log = log2v(mt);
     let corners = [board[0][0], board[0][3], board[3][0], board[3][3]];
-    let corner_score = if corners.contains(&mt) {
-        mt_log * mt_log * 400.0
+    let in_corner = corners.contains(&mt);
+    let corner_score = if in_corner {
+        mt_log * mt_log * 500.0
     } else {
-        -(mt_log * mt_log * 1500.0)
+        // Check if at least on an edge
+        let on_edge =
+            (0..4).any(|c| board[0][c] == mt) ||
+            (0..4).any(|c| board[3][c] == mt) ||
+            (0..4).any(|r| board[r][0] == mt) ||
+            (0..4).any(|r| board[r][3] == mt);
+        if on_edge { -(mt_log * mt_log * 1000.0) }
+        else       { -(mt_log * mt_log * 3000.0) }
     };
 
-    // 4) Scatter penalty — non-adjacent duplicate high tiles (no heap alloc)
+    // 4) Scatter penalty — non-adjacent duplicate high tiles
     let mut scatter_penalty = 0.0;
     let mut positions: [(usize, usize); 16] = [(0, 0); 16];
     let mut pos_count = 0;
@@ -198,7 +207,7 @@ fn evaluate(board: &Board) -> f64 {
                 let dc = (positions[i].1 as i32 - positions[j].1 as i32).abs();
                 if dr + dc != 1 {
                     let lv = log2v(v1);
-                    scatter_penalty -= lv * lv * 1500.0;
+                    scatter_penalty -= lv * lv * 2000.0;
                 }
             }
         }
@@ -258,9 +267,46 @@ fn evaluate(board: &Board) -> f64 {
         }
     }
 
-    // Reduced snake multiplier (5 vs 10) since geometric weights are ~27× steeper
+    // 8) Chain bonus — reward descending neighbors from the max tile
+    //    e.g. 1024→512→256→128 in adjacent cells
+    let mut chain_bonus = 0.0;
+    if in_corner && mt >= 64 {
+        // Find corner with max tile
+        let corner_pos: [(usize, usize); 4] = [(0,0), (0,3), (3,0), (3,3)];
+        for &(cr, cc) in &corner_pos {
+            if board[cr][cc] != mt { continue; }
+            // Follow chain from corner
+            let mut cur_r = cr;
+            let mut cur_c = cc;
+            let mut cur_val = mt;
+            let mut chain_len = 0;
+            'chain: loop {
+                let target = cur_val / 2;
+                if target == 0 { break; }
+                let neighbors: [(i32, i32); 4] = [(-1,0),(1,0),(0,-1),(0,1)];
+                for &(dr, dc) in &neighbors {
+                    let nr = cur_r as i32 + dr;
+                    let nc = cur_c as i32 + dc;
+                    if nr >= 0 && nr < 4 && nc >= 0 && nc < 4 {
+                        if board[nr as usize][nc as usize] == target {
+                            cur_r = nr as usize;
+                            cur_c = nc as usize;
+                            cur_val = target;
+                            chain_len += 1;
+                            let lv = log2v(target);
+                            chain_bonus += lv * lv * 300.0;
+                            continue 'chain;
+                        }
+                    }
+                }
+                break;
+            }
+            if chain_len > 0 { break; }
+        }
+    }
+
     snake * 5.0 + empty_score + corner_score + scatter_penalty
-        + mono * 500.0 + smooth * 200.0 + merges * 700.0
+        + mono * 600.0 + smooth * 250.0 + merges * 800.0 + chain_bonus
 }
 
 fn expectimax(board: &Board, depth: u32, is_max: bool) -> f64 {
