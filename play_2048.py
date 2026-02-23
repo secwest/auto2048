@@ -897,7 +897,7 @@ def play_ai(driver):
                 time.sleep(0.5)
                 pixel_board = read_board(driver)
                 if pixel_board and pixel_board != prev_board:
-                    tracked_board = None  # Reset tracking
+                    tracked_board = None
                     same_count = 0
                     continue
             if same_count > 4 and same_count <= 8:
@@ -918,13 +918,14 @@ def play_ai(driver):
                     new_board = read_board(driver)
                     if new_board and new_board != pixel_board:
                         any_moved = True
-                        tracked_board = None  # Reset tracking
+                        tracked_board = None
                         move_num += 1
                         same_count = 0
                         break
                 if any_moved:
                     continue
-            if same_count > 8:
+            if same_count > 8 and same_count <= 15:
+                # Try power-ups only in the first few stuck cycles
                 charges = get_charges(driver)
                 if charges[0] > 0:
                     print(f"  ⚡ UNDO to escape stuck state")
@@ -943,6 +944,8 @@ def play_ai(driver):
                         tracked_board = None
                         same_count = 0
                         continue
+            if same_count > 20:
+                # Truly dead — no recovery after 20 iterations
                 mt = max_tile(board)
                 print(f"\n{'='*48}")
                 print(f"  GAME OVER — Best tile: {mt}  Moves: {move_num}")
@@ -1027,23 +1030,37 @@ def play_ai(driver):
         send_key(driver, direction)
         time.sleep(MOVE_DELAY)
 
-        # ── State tracking: reconcile computed vs pixel-read board ──
-        expected_board, _, _ = simulate_move(board, direction)
+        # ── State tracking: compute expected, read actual, verify ──
+        expected_board, _, moved = simulate_move(board, direction)
         new_board = read_board(driver)
 
         # Detect if move didn't register (pixel board unchanged)
         if new_board and new_board == pixel_board:
-            # Move didn't happen — retry once
             send_key(driver, direction)
             time.sleep(MOVE_DELAY + 0.1)
             new_board = read_board(driver)
             if new_board and new_board == pixel_board:
-                # Still didn't register — don't reconcile, keep old state
                 continue
 
-        # Only reconcile if move actually happened
-        if new_board and tracked_board is not None:
-            new_board = reconcile_board(expected_board, new_board)
+        # Verify move by checking for new 2/4 tile spawn
+        if new_board and tracked_board is not None and moved:
+            # Find cells where expected is empty but pixel shows 2 or 4
+            new_spawns = [(r, c) for r in range(4) for c in range(4)
+                          if expected_board[r][c] == 0
+                          and new_board[r][c] in (2, 4)]
+            if len(new_spawns) >= 1:
+                # Move confirmed — use computed board + new tile
+                result = [row[:] for row in expected_board]
+                for r, c in new_spawns:
+                    result[r][c] = new_board[r][c]
+                new_board = result
+            else:
+                # No new tile found where expected — state may have drifted
+                # Fall back to pixel reading
+                tracked_board = None
+                new_board = read_board(driver)
+        elif new_board and tracked_board is None:
+            pass  # Bootstrapping — just use pixel board as-is
 
         # ── Post-move evaluation → possible undo ──
         if new_board and should_undo(board, new_board, moves):
@@ -1100,10 +1117,6 @@ def play_ai(driver):
                             tracked_board = None
                             time.sleep(MOVE_DELAY)
                             continue
-
-        # ── Periodic tracking reset (every 50 moves) to prevent drift ──
-        if move_num % 50 == 0:
-            tracked_board = None
 
         # ── Periodic ad/dialog dismissal (every 20 moves) ──
         if move_num % 20 == 0:
