@@ -269,8 +269,10 @@ fn evaluate(board: &Board) -> f64 {
             if v == 0 { continue; }
             let lv = log2v(v);
             let weight = if v >= 256 { lv * lv * lv } else { lv * lv };
-            // Extra bonus for merging tiles that are half the max tile
-            let strategic = if v == mt / 2 { 2.0 } else { 1.0 };
+            // Extra bonus for strategic merges:
+            // - tiles matching max tile (merging creates new max): 5x
+            // - tiles half the max (next critical merge): 3x
+            let strategic = if v == mt { 5.0 } else if v == mt / 2 { 3.0 } else { 1.0 };
             if c + 1 < 4 && board[r][c + 1] == v { merges += weight * strategic; }
             if r + 1 < 4 && board[r + 1][c] == v { merges += weight * strategic; }
         }
@@ -315,7 +317,7 @@ fn evaluate(board: &Board) -> f64 {
     }
 
     snake * 5.0 + empty_score + corner_score + scatter_penalty
-        + mono * 600.0 + smooth * 250.0 + merges * 800.0 + chain_bonus
+        + mono * 600.0 + smooth * 250.0 + merges * 1200.0 + chain_bonus
 }
 
 fn expectimax(board: &Board, depth: u32, is_max: bool) -> f64 {
