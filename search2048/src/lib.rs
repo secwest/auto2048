@@ -175,7 +175,7 @@ fn evaluate(board: &Board) -> f64 {
     let corners = [board[0][0], board[0][3], board[3][0], board[3][3]];
     let in_corner = corners.contains(&mt);
     let corner_score = if in_corner {
-        mt_log * mt_log * 500.0
+        mt_log * mt_log * 800.0
     } else {
         // Check if at least on an edge
         let on_edge =
@@ -183,8 +183,8 @@ fn evaluate(board: &Board) -> f64 {
             (0..4).any(|c| board[3][c] == mt) ||
             (0..4).any(|r| board[r][0] == mt) ||
             (0..4).any(|r| board[r][3] == mt);
-        if on_edge { -(mt_log * mt_log * 1000.0) }
-        else       { -(mt_log * mt_log * 3000.0) }
+        if on_edge { -(mt_log * mt_log * 2000.0) }
+        else       { -(mt_log * mt_log * 5000.0) }
     };
 
     // 4) Scatter penalty — non-adjacent duplicate high tiles
@@ -211,7 +211,7 @@ fn evaluate(board: &Board) -> f64 {
                 if dr + dc != 1 {
                     let lv = log2v(v1);
                     // Extra harsh for half-max tiles (e.g., two 256s when max is 512)
-                    let base = if v1 == half_mt { 4000.0 } else { 2000.0 };
+                    let base = if v1 == half_mt { 5000.0 } else { 3000.0 };
                     scatter_penalty -= lv * lv * base;
                 }
             }
