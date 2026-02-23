@@ -1032,14 +1032,25 @@ def play_ai(driver):
 
         # ── Adaptive depth ──
         if _RUST_DLL is not None:
-            if ec >= 10:
-                depth = 6
-            elif ec >= 6:
-                depth = 7
-            elif ec >= 3:
-                depth = 8
+            # Deeper search when high tiles present and board is tight
+            if mt >= 512:
+                if ec >= 8:
+                    depth = 7
+                elif ec >= 4:
+                    depth = 8
+                elif ec >= 2:
+                    depth = 9
+                else:
+                    depth = 10
             else:
-                depth = 9
+                if ec >= 10:
+                    depth = 6
+                elif ec >= 6:
+                    depth = 7
+                elif ec >= 3:
+                    depth = 8
+                else:
+                    depth = 9
         else:
             if ec >= 8:
                 depth = 3

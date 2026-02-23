@@ -256,14 +256,16 @@ fn evaluate(board: &Board) -> f64 {
     }
 
     // 7) Merge potential — adjacent equal tiles (weighted by value)
+    //    Stronger bonus for high-value merges (512+512, 256+256, etc.)
     let mut merges = 0.0;
     for r in 0..4 {
         for c in 0..4 {
             let v = board[r][c];
             if v == 0 { continue; }
             let lv = log2v(v);
-            if c + 1 < 4 && board[r][c + 1] == v { merges += lv * lv; }
-            if r + 1 < 4 && board[r + 1][c] == v { merges += lv * lv; }
+            let weight = if v >= 256 { lv * lv * lv } else { lv * lv };
+            if c + 1 < 4 && board[r][c + 1] == v { merges += weight; }
+            if r + 1 < 4 && board[r + 1][c] == v { merges += weight; }
         }
     }
 
@@ -294,7 +296,7 @@ fn evaluate(board: &Board) -> f64 {
                             cur_val = target;
                             chain_len += 1;
                             let lv = log2v(target);
-                            chain_bonus += lv * lv * 300.0;
+                            chain_bonus += lv * lv * 500.0;
                             continue 'chain;
                         }
                     }
