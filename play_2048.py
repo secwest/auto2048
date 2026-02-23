@@ -937,16 +937,23 @@ def play_ai(driver):
                     continue
             if same_count > 4 and same_count <= 8:
                 if same_count == 5:
-                    # Check for tracking divergence early
+                    # Check for tracking divergence
                     if tracked_board is not None and pixel_board:
                         t_empties = {(r,c) for r in range(4) for c in range(4)
                                      if tracked_board[r][c] == 0}
                         p_empties = {(r,c) for r in range(4) for c in range(4)
                                      if pixel_board[r][c] == 0}
-                        mismatch = len(t_empties.symmetric_difference(p_empties))
-                        if mismatch >= 1:
-                            print(f"  ⚠ Tracking divergence detected early "
-                                  f"({mismatch} empty mismatches) — resetting")
+                        empty_mismatch = len(t_empties.symmetric_difference(p_empties))
+                        # Also compare cell values (ignoring gold 2x misreads)
+                        val_mismatches = 0
+                        for r in range(4):
+                            for c in range(4):
+                                t, p = tracked_board[r][c], pixel_board[r][c]
+                                if t != p and t != p * 2 and p != t * 2:
+                                    val_mismatches += 1
+                        if empty_mismatch >= 1 or val_mismatches >= 4:
+                            print(f"  ⚠ Tracking divergence: {empty_mismatch} empty "
+                                  f"mismatches, {val_mismatches} value mismatches")
                             prev_tracked_ref = [row[:] for row in tracked_board]
                             tracked_board = [row[:] for row in pixel_board]
                             board = [row[:] for row in pixel_board]
@@ -1033,10 +1040,16 @@ def play_ai(driver):
                                  if tracked_board[r][c] == 0}
                     p_empties = {(r,c) for r in range(4) for c in range(4)
                                  if pixel_board[r][c] == 0}
-                    mismatch = len(t_empties.symmetric_difference(p_empties))
-                    if mismatch >= 1:
-                        print(f"  ⚠ Tracking divergence: {mismatch} empty-cell "
-                              f"mismatches — resetting to pixel board")
+                    empty_mismatch = len(t_empties.symmetric_difference(p_empties))
+                    val_mismatches = 0
+                    for r in range(4):
+                        for c in range(4):
+                            t, p = tracked_board[r][c], pixel_board[r][c]
+                            if t != p and t != p * 2 and p != t * 2:
+                                val_mismatches += 1
+                    if empty_mismatch >= 1 or val_mismatches >= 4:
+                        print(f"  ⚠ Tracking divergence: {empty_mismatch} empty, "
+                              f"{val_mismatches} value mismatches — resetting")
                         prev_tracked_ref = [row[:] for row in tracked_board]
                         tracked_board = [row[:] for row in pixel_board]
                         board = [row[:] for row in pixel_board]
@@ -1048,7 +1061,32 @@ def play_ai(driver):
                     focus_retries += 1
                     print(f"  🔄 Focus retry {focus_retries}/3 — valid moves exist")
                     dismiss_dialogs()
-                    time.sleep(1.0)
+                    time.sleep(0.5)
+                    # Try ActionChains keyboard as aggressive fallback
+                    try:
+                        from selenium.webdriver.common.keys import Keys
+                        canvas = driver.find_elements(By.CSS_SELECTOR, "canvas")
+                        if canvas:
+                            ac = ActionChains(driver)
+                            ac.click(canvas[0]).perform()
+                            time.sleep(0.3)
+                            key_map = {
+                                'up': Keys.ARROW_UP, 'down': Keys.ARROW_DOWN,
+                                'left': Keys.ARROW_LEFT, 'right': Keys.ARROW_RIGHT
+                            }
+                            for d in DIRECTIONS:
+                                if simulate_move(board, d)[2]:
+                                    ac = ActionChains(driver)
+                                    ac.send_keys(key_map[d]).perform()
+                                    time.sleep(MOVE_DELAY + 0.3)
+                                    nb = read_board(driver)
+                                    if nb and nb != pixel_board:
+                                        print(f"  ✓ ActionChains {d} worked!")
+                                        same_count = 0
+                                        focus_retries = 0
+                                        break
+                    except Exception as e:
+                        print(f"  ActionChains fallback failed: {e}")
                     same_count = 5
                     continue
                 # Truly dead — no recovery possible
