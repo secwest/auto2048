@@ -412,17 +412,8 @@ def send_key(driver, direction):
         driver.execute_script("""
         var opts = {key: arguments[0], code: arguments[0], keyCode: arguments[1],
                     which: arguments[1], bubbles: true, cancelable: true};
-        // Dispatch on document (primary)
         document.dispatchEvent(new KeyboardEvent('keydown', opts));
         document.dispatchEvent(new KeyboardEvent('keyup', opts));
-        // Also dispatch on canvas and body for redundancy
-        var c = document.querySelector('canvas');
-        if (c) {
-            c.dispatchEvent(new KeyboardEvent('keydown', opts));
-            c.dispatchEvent(new KeyboardEvent('keyup', opts));
-        }
-        document.body.dispatchEvent(new KeyboardEvent('keydown', opts));
-        document.body.dispatchEvent(new KeyboardEvent('keyup', opts));
         """, key, code)
     except Exception:
         pass
@@ -1187,15 +1178,20 @@ def play_ai(driver):
             # Proactive swap disabled — unreliable cell clicks and
             # unpredictable game mechanics destroyed a 256 tile in testing.
 
-        # ── Periodic ad/dialog dismissal (every 20 moves) ──
-        if move_num % 20 == 0:
+        # ── Periodic focus refresh and ad dismissal ──
+        if move_num % 10 == 0:
             try:
                 driver.execute_script(
                     "document.querySelectorAll('iframe').forEach(f=>f.remove());"
                 )
+                canvas = driver.find_elements(By.CSS_SELECTOR, "canvas")
+                if canvas and canvas[0].is_displayed():
+                    driver.execute_script(
+                        "arguments[0].focus(); arguments[0].click();", canvas[0])
             except Exception:
                 pass
-            dismiss_dialogs()
+            if move_num % 20 == 0:
+                dismiss_dialogs()
     except Exception as e:
         import traceback
         print(f"\n⚠ play_ai exception: {e}")
