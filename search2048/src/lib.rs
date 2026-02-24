@@ -147,15 +147,16 @@ fn cell(b: BB, r: usize, c: usize) -> u8 {
     ((b >> ((r << 4) | (c << 2))) & 0xF) as u8
 }
 
-fn transpose(b: BB) -> BB {
-    let mut r = 0u64;
-    for row in 0..4u32 {
-        for col in 0..4u32 {
-            let v = (b >> (row * 16 + col * 4)) & 0xF;
-            r |= v << (col * 16 + row * 4);
-        }
-    }
-    r
+fn transpose(x: BB) -> BB {
+    // nneonneo bit-parallel transpose: two rounds of 2×2 block swaps
+    let a1 = x & 0xF0F00F0FF0F00F0Fu64;
+    let a2 = x & 0x0000F0F00000F0F0u64;
+    let a3 = x & 0x0F0F00000F0F0000u64;
+    let a = a1 | (a2 << 12) | (a3 >> 12);
+    let b1 = a & 0xFF00FF0000FF00FFu64;
+    let b2 = a & 0x00000000FF00FF00u64;
+    let b3 = a & 0x00FF00FF00000000u64;
+    b1 | (b2 << 24) | (b3 >> 24)
 }
 
 #[inline]
@@ -206,7 +207,7 @@ fn do_move(b: BB, dir: u8) -> (BB, f64, bool) {
 // ── Evaluation ──
 
 fn evaluate(b: BB) -> f64 {
-    // Row + column heuristic from lookup tables (8 lookups)
+    // Pure nneonneo heuristic: sum of row + column table scores (8 lookups)
     let t = transpose(b);
     let mut score = 0.0;
     for i in 0..4 {
@@ -215,32 +216,6 @@ fn evaluate(b: BB) -> f64 {
             score += TBL_HEUR[get_row(t, i) as usize];
         }
     }
-
-    // Board-level: corner bonus for max tile
-    let mut max_rank = 0u8;
-    let mut max_r = 0usize;
-    let mut max_c = 0usize;
-    for r in 0..4 {
-        for c in 0..4 {
-            let v = cell(b, r, c);
-            if v > max_rank { max_rank = v; max_r = r; max_c = c; }
-        }
-    }
-
-    if max_rank >= 7 {  // 128+
-        let mr = max_rank as f64;
-        let is_corner = (max_r == 0 || max_r == 3) && (max_c == 0 || max_c == 3);
-        let is_edge = max_r == 0 || max_r == 3 || max_c == 0 || max_c == 3;
-
-        if is_corner {
-            score += mr * mr * 100.0;
-        } else if is_edge {
-            score -= mr * mr * 200.0;
-        } else {
-            score -= mr * mr * 500.0;
-        }
-    }
-
     score
 }
 

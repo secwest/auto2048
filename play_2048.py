@@ -1262,20 +1262,20 @@ def play_ai(driver):
         if _RUST_DLL is not None:
             if mt >= 1024:
                 if ec >= 8:
-                    depth = 6
-                elif ec >= 4:
                     depth = 7
+                elif ec >= 4:
+                    depth = 8
                 elif ec >= 2:
-                    depth = 8
+                    depth = 9
                 else:
-                    depth = 8
+                    depth = 9
             elif mt >= 512:
                 if ec >= 8:
-                    depth = 6
+                    depth = 7
                 elif ec >= 4:
                     depth = 7
                 elif ec >= 2:
-                    depth = 7
+                    depth = 8
                 else:
                     depth = 8
             else:

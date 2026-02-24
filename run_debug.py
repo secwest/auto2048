@@ -5,8 +5,12 @@ class Tee:
         self.files = files
     def write(self, data):
         for f in self.files:
-            f.write(data)
-            f.flush()
+            try:
+                f.write(data)
+                f.flush()
+            except UnicodeEncodeError:
+                f.write(data.encode('ascii', 'replace').decode('ascii'))
+                f.flush()
     def flush(self):
         for f in self.files:
             f.flush()
