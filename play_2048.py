@@ -1257,36 +1257,44 @@ def play_ai(driver):
                 pass
             print("Continuing to play for a higher score…\n")
 
-        # ── Adaptive depth ──
+        # ── Adaptive depth (bitboard engine is ~100x faster) ──
         if _RUST_DLL is not None:
-            # Deeper search when high tiles present and board is tight
             if mt >= 1024:
                 if ec >= 8:
-                    depth = 8
+                    depth = 10
                 elif ec >= 4:
-                    depth = 9
+                    depth = 11
                 elif ec >= 2:
+                    depth = 12
+                else:
+                    depth = 13
+            elif mt >= 512:
+                if ec >= 8:
+                    depth = 9
+                elif ec >= 4:
+                    depth = 10
+                elif ec >= 2:
+                    depth = 11
+                else:
+                    depth = 12
+            elif mt >= 256:
+                if ec >= 8:
+                    depth = 9
+                elif ec >= 4:
+                    depth = 10
+                elif ec >= 2:
+                    depth = 11
+                else:
+                    depth = 12
+            else:
+                if ec >= 10:
+                    depth = 8
+                elif ec >= 6:
+                    depth = 9
+                elif ec >= 3:
                     depth = 10
                 else:
                     depth = 11
-            elif mt >= 512:
-                if ec >= 8:
-                    depth = 7
-                elif ec >= 4:
-                    depth = 8
-                elif ec >= 2:
-                    depth = 9
-                else:
-                    depth = 10
-            else:
-                if ec >= 10:
-                    depth = 6
-                elif ec >= 6:
-                    depth = 7
-                elif ec >= 3:
-                    depth = 8
-                else:
-                    depth = 9
         else:
             if ec >= 8:
                 depth = 3
