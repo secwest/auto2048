@@ -9,8 +9,6 @@ use std::sync::Once;
 
 type BB = u64;  // 16 nybbles: row0=bits[0:15], row1=[16:31], row2=[32:47], row3=[48:63]
 
-const MAX_CHANCE: usize = 6;
-
 // ── Lookup tables (filled once at startup) ──
 static mut TBL_LEFT:  [u16; 65536] = [0; 65536];
 static mut TBL_RIGHT: [u16; 65536] = [0; 65536];
@@ -18,14 +16,15 @@ static mut TBL_SCORE: [f64; 65536] = [0.0; 65536];  // merge score for left-move
 static mut TBL_HEUR:  [f64; 65536] = [0.0; 65536];  // heuristic score per row
 static INIT: Once = Once::new();
 
-// Heuristic weights (nneonneo/xificurk CMA-ES optimized)
+// Heuristic weights (nneonneo/xificurk CMA-ES optimized — EXACT values)
 const W_LOST:   f64 = 200000.0;
-const W_EMPTY:  f64 = 270000.0;
-const W_MERGES: f64 = 700000.0;
-const W_MONO:   f64 = 47000.0;
-const W_SUM:    f64 = 11000.0;
+const W_EMPTY:  f64 = 270.0;
+const W_MERGES: f64 = 700.0;
+const W_MONO:   f64 = 47.0;
+const W_SUM:    f64 = 11.0;
 const MONO_POW: i32 = 4;
 const SUM_POW:  f64 = 3.5;
+const CPROB_THRESH: f64 = 0.0001;  // prune branches below this probability
 
 // Transposition table: bitboard → (depth, score)
 thread_local! {
@@ -58,7 +57,7 @@ fn init_tables() {
                     sum_val += (t[i] as f64).powf(SUM_POW);
                     if prev == t[i] {
                         counter += 1;
-                    } else if prev != 0 {
+                    } else if counter > 0 {
                         merges += 1.0 + counter as f64;
                         counter = 0;
                     }
@@ -71,7 +70,7 @@ fn init_tables() {
                     else if t[i] > t[i - 1] { mono_r += b - a; }
                 }
             }
-            if prev != 0 { merges += 1.0 + counter as f64; }
+            if counter > 0 { merges += 1.0 + counter as f64; }
 
             let heur = -W_LOST
                 + W_EMPTY * empty
@@ -234,92 +233,84 @@ fn evaluate(b: BB) -> f64 {
         let is_edge = max_r == 0 || max_r == 3 || max_c == 0 || max_c == 3;
 
         if is_corner {
-            score += mr * mr * 5000.0;
+            score += mr * mr * 100.0;
         } else if is_edge {
-            score -= mr * mr * 8000.0;
+            score -= mr * mr * 200.0;
         } else {
-            score -= mr * mr * 20000.0;
+            score -= mr * mr * 500.0;
         }
     }
 
     score
 }
 
-// ── Expectimax search ──
+// ── Expectimax search (nneonneo architecture) ──
+// Depth counts MOVE nodes only. Probability pruning for chance nodes.
 
-fn expectimax(board: BB, depth: u32, is_max: bool) -> f64 {
-    if depth == 0 { return evaluate(board); }
+/// Count distinct non-zero tile ranks on the board
+fn count_distinct(board: BB) -> u32 {
+    let mut seen = 0u16;  // bitmask of ranks seen
+    for i in 0..16 {
+        let rank = ((board >> (i * 4)) & 0xF) as u16;
+        if rank != 0 { seen |= 1 << rank; }
+    }
+    seen.count_ones()
+}
 
-    if !is_max {
-        let cached = TT.with(|tt| {
-            if let Some(&(d, s)) = tt.borrow().get(&board) {
-                if d >= depth { return Some(s); }
-            }
-            None
-        });
-        if let Some(s) = cached { return s; }
+/// Chance node: enumerate tile spawns, call move node
+fn score_chance_node(board: BB, depth: u32, cprob: f64) -> f64 {
+    if cprob < CPROB_THRESH || depth == 0 {
+        return evaluate(board);
     }
 
-    if is_max {
-        let mut best = f64::NEG_INFINITY;
-        for d in 0..4u8 {
-            let (nb, ms, moved) = do_move(board, d);
-            if !moved { continue; }
-            let v = expectimax(nb, depth - 1, false) + ms;
-            if v > best { best = v; }
+    // TT check
+    let cached = TT.with(|tt| {
+        if let Some(&(d, s)) = tt.borrow().get(&board) {
+            if d >= depth { return Some(s); }
         }
-        if best == f64::NEG_INFINITY { evaluate(board) } else { best }
-    } else {
-        // Collect empty cells
-        let mut empties: Vec<usize> = Vec::with_capacity(16);
-        for i in 0..16 {
-            if (board >> (i * 4)) & 0xF == 0 {
-                empties.push(i);
-            }
-        }
-        if empties.is_empty() { return evaluate(board); }
+        None
+    });
+    if let Some(s) = cached { return s; }
 
-        // Limit to most critical cells when too many empties
-        let cells: Vec<usize> = if empties.len() > MAX_CHANCE {
-            let mut scored: Vec<(i32, usize)> = empties.iter().map(|&pos| {
-                let r = pos / 4;
-                let c = pos % 4;
-                let mut adj = 0i32;
-                for &(dr, dc) in &[(-1i32, 0i32), (1, 0), (0, -1), (0, 1)] {
-                    let nr = r as i32 + dr;
-                    let nc = c as i32 + dc;
-                    if nr >= 0 && nr < 4 && nc >= 0 && nc < 4 {
-                        let idx = nr as usize * 4 + nc as usize;
-                        if (board >> (idx * 4)) & 0xF != 0 { adj += 1; }
-                    }
-                }
-                (-adj, pos)
-            }).collect();
-            scored.sort();
-            scored[..MAX_CHANCE].iter().map(|&(_, p)| p).collect()
-        } else {
-            empties
-        };
-
-        let mut total = 0.0;
-        for &pos in &cells {
-            let shift = (pos * 4) as u64;
-            let nb2 = board | (1u64 << shift);  // rank 1 = tile 2
-            total += 0.9 * expectimax(nb2, depth - 1, true);
-            let nb4 = board | (2u64 << shift);  // rank 2 = tile 4
-            total += 0.1 * expectimax(nb4, depth - 1, true);
-        }
-        let result = total / cells.len() as f64;
-
-        // Cache in TT (bitboard IS its own hash — collision-free)
-        TT.with(|tt| {
-            let mut t = tt.borrow_mut();
-            t.insert(board, (depth, result));
-            if t.len() > (1 << 22) { t.clear(); }
-        });
-
-        result
+    let mut num_open = 0u32;
+    for i in 0..16 {
+        if (board >> (i * 4)) & 0xF == 0 { num_open += 1; }
     }
+    if num_open == 0 { return evaluate(board); }
+
+    let prob_per_cell = cprob / num_open as f64;
+    let mut total = 0.0;
+
+    for i in 0..16u32 {
+        if (board >> (i * 4)) & 0xF != 0 { continue; }
+        let shift = i * 4;
+        let nb2 = board | (1u64 << shift);
+        total += 0.9 * score_move_node(nb2, depth, prob_per_cell * 0.9);
+        let nb4 = board | (2u64 << shift);
+        total += 0.1 * score_move_node(nb4, depth, prob_per_cell * 0.1);
+    }
+    let result = total / num_open as f64;
+
+    // Cache
+    TT.with(|tt| {
+        let mut t = tt.borrow_mut();
+        t.insert(board, (depth, result));
+        if t.len() > (1 << 22) { t.clear(); }
+    });
+
+    result
+}
+
+/// Move node: try all 4 directions, pick best
+fn score_move_node(board: BB, depth: u32, cprob: f64) -> f64 {
+    let mut best = 0.0f64;
+    for d in 0..4u8 {
+        let (nb, _ms, moved) = do_move(board, d);
+        if !moved { continue; }
+        let v = score_chance_node(nb, depth - 1, cprob);
+        if v > best { best = v; }
+    }
+    best
 }
 
 /// C ABI: given board (16 u16s) and depth, write ranked moves.
@@ -342,13 +333,22 @@ pub extern "C" fn search_ranked_moves(
         board |= (rank & 0xF) << (i * 4);
     }
 
+    // Adaptive depth: distinct tiles - 2 (nneonneo strategy)
+    let adaptive_depth = if depth > 0 {
+        let distinct = count_distinct(board);
+        let dd = if distinct >= 4 { distinct - 2 } else { 2 };
+        depth.max(dd)  // use whichever is larger
+    } else {
+        depth
+    };
+
     TT.with(|tt| tt.borrow_mut().clear());
 
     let mut moves: Vec<(f64, u8)> = Vec::new();
     for d in 0..4u8 {
-        let (nb, ms, moved) = do_move(board, d);
+        let (nb, _ms, moved) = do_move(board, d);
         if !moved { continue; }
-        let score = expectimax(nb, depth, false) + ms;
+        let score = score_chance_node(nb, adaptive_depth, 1.0);
         moves.push((score, d));
     }
     moves.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());

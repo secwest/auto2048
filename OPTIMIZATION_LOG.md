@@ -48,3 +48,28 @@ for deep search. Need fundamental algorithmic change.
 - Probability cutoff: skip chance branches below threshold
 **Expected**: 100x+ faster search → can search depth 10-12 in same time as current depth 7-8
 **Result**: TBD
+
+---
+
+## Iteration 4: Critical Bug Fixes — Merge Counting, Weight Scale, Search Architecture
+**Commit**: TBD
+**Changes** (all derived from studying nneonneo's actual source code):
+1. **CRITICAL: Fixed merge counting** — `prev != 0` → `counter > 0`
+   - Old code: rows with ALL DIFFERENT tiles got merges=4 (e.g., [1,2,3,4])
+   - Fixed: only rows with ACTUAL consecutive equal tiles score merges
+   - This was THE bug — the bot couldn't distinguish "all different, no merges" from
+     "has merge opportunities", so it happily built dead-end monotonic boards
+2. **Fixed weight scale** — weights were 1000x too large
+   - Old: empty=270K, merges=700K, mono=47K, sum=11K
+   - Fixed: empty=270, merges=700, mono=47, sum=11 (with LOST_PENALTY=200K as baseline)
+   - The LOST_PENALTY is the constant offset; features are small adjustments
+3. **Rewrote search to nneonneo architecture**:
+   - Separate `score_chance_node` / `score_move_node` functions
+   - Depth counts MOVES only (not alternating max/chance)
+   - Probability pruning: `cprob < 0.0001` prunes unlikely branches
+   - Enumerate ALL empty cells (no MAX_CHANCE limit — pruning handles it)
+4. **Adaptive depth**: `max(depth, distinct_tiles - 2)` (nneonneo strategy)
+5. **Rescaled corner bonus** to match new weight magnitudes (100/200/500 vs 5K/8K/20K)
+6. **Python depth adjusted** for move-counting (5-8 instead of 8-13)
+**Expected**: Correct merge counting should fix the "beautiful dead board" failure mode
+**Result**: TBD
