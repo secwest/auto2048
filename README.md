@@ -341,8 +341,8 @@ after ~1000 moves, and improve merge strategy.
 
 ### Current Status
 
-The bot **consistently wins** (reaches 2048) — four consecutive wins confirmed
-(Games 31–34).  In one game it continued to **4096** post-win.  Typical
+The bot **consistently wins** (reaches 2048) — five consecutive wins confirmed
+(Games 31–35).  In one game it continued to **4096** post-win.  Typical
 win occurs around move 950–1000.
 
 | Game | Result | Moves | Notes |
@@ -351,6 +351,7 @@ win occurs around move 950–1000.
 | 32 | **WIN 2048** → 4096 | 998 | Reached 4096 after continuing |
 | 33 | **WIN 2048** | 979 | Perfect snake pattern |
 | 34 | **WIN 2048** | 997 | 1024→512 in column 0 |
+| 35 | **WIN 2048** | 1003 | Fifth consecutive win |
 
 Remaining minor issues:
 - **Post-win key dispatch** — after ~1000 moves, JS `dispatchEvent` stops
