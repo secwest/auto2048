@@ -72,7 +72,7 @@ fn init_tables() {
             }
             if counter > 0 { merges += 1.0 + counter as f64; }
 
-            let heur = -W_LOST
+            let heur = W_LOST
                 + W_EMPTY * empty
                 + W_MERGES * merges
                 - W_MONO * mono_l.min(mono_r)

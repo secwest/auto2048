@@ -72,4 +72,7 @@ for deep search. Need fundamental algorithmic change.
 5. **Rescaled corner bonus** to match new weight magnitudes (100/200/500 vs 5K/8K/20K)
 6. **Python depth adjusted** for move-counting (5-8 instead of 8-13)
 **Expected**: Correct merge counting should fix the "beautiful dead board" failure mode
-**Result**: TBD
+**Result**: Game28: 16 (REGRESSION — score_move_node init best=0.0 > negative heuristic!)
+           → HOTFIX: Changed -W_LOST to +W_LOST (heuristic must be positive like nneonneo)
+           Game29: 512 with clean snake (512→256→128→64 in col 0). Process exited before
+           game-over but major improvement confirmed.
