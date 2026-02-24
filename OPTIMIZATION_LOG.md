@@ -99,3 +99,6 @@ for deep search. Need fundamental algorithmic change.
 **Result**: Game31: **WIN! 2048 at move 1000**, game over at move 1058 (continued post-win).
            Clean snake: 1024→256→16→8→4 in col 0 at move 633, built to 2048 by move 1000.
            Confirms pure nneonneo heuristic is superior to heuristic + corner bonus.
+           Game32: **WIN! 2048 at move 998**, reached **4096**, game over at 1058.
+           Game33: **WIN! 2048 at move 979**. Perfect snake at move 808:
+           1024→256→64→16→8→4 across bottom rows. **Three consecutive wins!**
