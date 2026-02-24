@@ -6,6 +6,9 @@ expectimax search (with chance nodes) and a balanced evaluation function,
 and leverages the game's three power-ups (undo, swap, delete) when in
 trouble to push past difficult positions.
 
+After each game, prompts whether to play again and displays a cumulative
+scoreboard.
+
 Game: https://play2048.co/
 """
 
@@ -780,6 +783,96 @@ def close_video_ad(driver):
     return False
 
 
+def start_new_game(driver):
+    """Start a fresh game by clearing saved state and reloading."""
+    time.sleep(1)
+    # Try clicking DOM-based new-game/retry buttons first
+    for sel in ["button", "[class*='retry']", "[class*='try-again']",
+                "[class*='new-game']", "[class*='restart']"]:
+        try:
+            for btn in driver.find_elements(By.CSS_SELECTOR, sel):
+                if btn.is_displayed():
+                    txt = btn.text.strip().lower()
+                    if any(kw in txt for kw in
+                           ("new game", "try again", "retry", "restart",
+                            "play again", "new")):
+                        btn.click()
+                        time.sleep(2)
+                        # Verify board reset
+                        b = read_board(driver)
+                        if b:
+                            tiles = sum(1 for r in range(4) for c in range(4)
+                                        if b[r][c] > 0)
+                            if 1 <= tiles <= 4:
+                                return True
+        except Exception:
+            pass
+    # Fallback: clear game state from localStorage and reload
+    try:
+        driver.execute_script(
+            "try { localStorage.clear(); } catch(e) {}"
+            "try { sessionStorage.clear(); } catch(e) {}")
+    except Exception:
+        pass
+    driver.get(URL)
+    time.sleep(3)
+    # Kill ads and dismiss welcome banner
+    for _ in range(5):
+        kill_ads(driver)
+        close_video_ad(driver)
+        time.sleep(1)
+    try:
+        for b in driver.find_elements(By.CSS_SELECTOR,
+                "button.rounded-full, button[class*='close']"):
+            if b.is_displayed() and b.size["width"] <= 40:
+                b.click()
+                time.sleep(0.5)
+                break
+    except Exception:
+        pass
+    # Dismiss overlays
+    for sel in ["[id*='consent'] button", ".fc-cta-consent",
+                "#ez-accept-all", "button[class*='accept']"]:
+        try:
+            for b in driver.find_elements(By.CSS_SELECTOR, sel):
+                if b.is_displayed():
+                    b.click()
+                    time.sleep(0.3)
+        except Exception:
+            pass
+    # Focus game
+    try:
+        driver.find_element(By.ID, "app").click()
+    except Exception:
+        try:
+            driver.find_element(By.TAG_NAME, "body").click()
+        except Exception:
+            pass
+    time.sleep(0.5)
+    return True
+
+
+def print_scoreboard(results):
+    """Print cumulative scoreboard across all games."""
+    wins = sum(1 for r in results if r["won"])
+    total = len(results)
+    avg_moves = sum(r["moves"] for r in results) / total if total else 0
+    best = max(r["max_tile"] for r in results) if results else 0
+    print(f"\n{'─'*52}")
+    print(f"  SCOREBOARD  —  {total} games played, {wins} wins "
+          f"({100*wins/total:.0f}%)" if total else "")
+    print(f"{'─'*52}")
+    print(f"  {'Game':>6}  {'Result':>8}  {'Max Tile':>10}  {'Moves':>7}")
+    print(f"  {'─'*6}  {'─'*8}  {'─'*10}  {'─'*7}")
+    for i, r in enumerate(results, 1):
+        status = "WIN ★" if r["won"] else "LOSS"
+        print(f"  {i:>6}  {status:>8}  {r['max_tile']:>10}  {r['moves']:>7}")
+    print(f"  {'─'*6}  {'─'*8}  {'─'*10}  {'─'*7}")
+    print(f"  {'Total':>6}  {f'{wins}W/{total-wins}L':>8}  {best:>10}  "
+          f"{avg_moves:>7.0f} avg")
+    print(f"{'─'*52}\n")
+
+
 def main():
     print("Starting 2048 AI…\n")
     options = webdriver.ChromeOptions()
@@ -872,18 +965,74 @@ def main():
         board = read_board(driver)
         tiles = sum(1 for r in range(4) for c in range(4) if board and board[r][c] > 0)
 
-        if board and 1 <= tiles <= 4:
-            charges = get_charges(driver)
-            print(f"✓ Board readable — expectimax AI with power-ups")
-            print(f"  Power-ups: undo={charges[0]} swap={charges[1]} "
-                  f"delete={charges[2]}")
-            print_board(board, "Initial board")
-            play_ai(driver)
-        else:
+        if not (board and 1 <= tiles <= 4):
             print("✗ Board not readable (%d tiles)." % (tiles or 0))
+            return
+
+        results = []
+        game_num = 0
+
+        while True:
+            game_num += 1
+            print(f"\n{'━'*52}")
+            print(f"  GAME {game_num}")
+            print(f"{'━'*52}")
+
+            if game_num == 1:
+                charges = get_charges(driver)
+                print(f"✓ Board readable — expectimax AI with power-ups")
+                print(f"  Power-ups: undo={charges[0]} swap={charges[1]} "
+                      f"delete={charges[2]}")
+                print_board(board, "Initial board")
+
+            result = play_ai(driver)
+            if result is None:
+                result = {"max_tile": 0, "moves": 0, "won": False}
+            results.append(result)
+
+            print_scoreboard(results)
+
+            # Prompt user
+            try:
+                answer = input("Play another game? [Y/n] ").strip().lower()
+            except EOFError:
+                break
+            if answer in ("n", "no", "q", "quit", "exit"):
+                break
+
+            # Start new game
+            print("\nStarting new game…")
+            start_new_game(driver)
+            kill_ads(driver)
+            close_video_ad(driver)
+            time.sleep(1)
+
+            # Wait for board to be ready (fresh game = 1-4 tiles)
+            board = None
+            for attempt in range(15):
+                board = read_board(driver)
+                if board:
+                    tiles = sum(1 for r in range(4) for c in range(4)
+                                if board[r][c] > 0)
+                    if 1 <= tiles <= 4:
+                        charges = get_charges(driver)
+                        print(f"✓ Board readable — expectimax AI with power-ups")
+                        print(f"  Power-ups: undo={charges[0]} swap={charges[1]} "
+                              f"delete={charges[2]}")
+                        print_board(board, "Initial board")
+                        break
+                kill_ads(driver)
+                close_video_ad(driver)
+                time.sleep(1)
+            else:
+                print("⚠ Could not start new game — board not ready")
+                break
+
+        print("\nFinal results:")
+        print_scoreboard(results)
 
         try:
-            input("\nPress Enter to close the browser…")
+            input("Press Enter to close the browser…")
         except EOFError:
             pass
     finally:
@@ -891,6 +1040,7 @@ def main():
 
 
 def play_ai(driver):
+    """Play one game. Returns dict with game stats."""
     move_num = 0
     same_count = 0
     prev_board = None
@@ -1108,26 +1258,13 @@ def play_ai(driver):
                 continue
             if same_count > 8 and same_count <= 15:
                 # Try power-ups only in the first few stuck cycles
-                charges = get_charges(driver)
-                if charges[0] > 0:
-                    print(f"  ⚡ UNDO to escape stuck state")
-                    if use_undo(driver):
-                        time.sleep(0.5)
-                        check = read_board(driver)
-                        if check and check != pixel_board:
-                            if tracked_board is not None:
-                                prev_tracked_ref = [row[:] for row in tracked_board]
-                            tracked_board = None
-                            same_count = 0
-                            continue
-                        print(f"  ⚠ UNDO clicked but board unchanged")
-                if charges[2] > 0:
-                    info = find_best_delete(board)
-                    if info:
-                        val, dr, dc = info
-                        print(f"  ⚡ DELETE {val} tiles (charge left) "
-                              f"to avoid game over")
-                        if use_delete(driver, dr, dc):
+                # Skip power-ups post-win — no point extending a won game
+                # when keys aren't registering
+                if not won:
+                    charges = get_charges(driver)
+                    if charges[0] > 0:
+                        print(f"  ⚡ UNDO to escape stuck state")
+                        if use_undo(driver):
                             time.sleep(0.5)
                             check = read_board(driver)
                             if check and check != pixel_board:
@@ -1136,9 +1273,25 @@ def play_ai(driver):
                                 tracked_board = None
                                 same_count = 0
                                 continue
-                            # Delete clicked but board unchanged
-                            print(f"  ⚠ DELETE clicked but board unchanged")
-                        # Delete failed — don't reset same_count
+                            print(f"  ⚠ UNDO clicked but board unchanged")
+                    if charges[2] > 0:
+                        info = find_best_delete(board)
+                        if info:
+                            val, dr, dc = info
+                            print(f"  ⚡ DELETE {val} tiles (charge left) "
+                                  f"to avoid game over")
+                            if use_delete(driver, dr, dc):
+                                time.sleep(0.5)
+                                check = read_board(driver)
+                                if check and check != pixel_board:
+                                    if tracked_board is not None:
+                                        prev_tracked_ref = [row[:] for row in tracked_board]
+                                    tracked_board = None
+                                    same_count = 0
+                                    continue
+                                # Delete clicked but board unchanged
+                                print(f"  ⚠ DELETE clicked but board unchanged")
+                            # Delete failed — don't reset same_count
             if same_count > 12:
                 # Check for tracking divergence before declaring game over
                 if tracked_board is not None and pixel_board:
@@ -1196,8 +1349,8 @@ def play_ai(driver):
                         print(f"  ActionChains fallback failed: {e}")
                     same_count = 5
                     continue
-                # Last resort: page refresh to reset JS event handlers
-                if has_valid and page_refresh_count < 2:
+                # Last resort: page refresh (skip if already won)
+                if has_valid and page_refresh_count < 2 and not won:
                     page_refresh_count += 1
                     print(f"  🔄 Page refresh {page_refresh_count}/2 — "
                           f"resetting event handlers")
@@ -1228,7 +1381,7 @@ def play_ai(driver):
                 print(f"  GAME OVER — Best tile: {mt}  Moves: {move_num}")
                 print(f"{'='*48}")
                 print_board(board, "Final board")
-                return
+                return {"max_tile": mt, "moves": move_num, "won": won}
         else:
             same_count = 0
             focus_retries = 0
@@ -1319,7 +1472,7 @@ def play_ai(driver):
             print(f"  GAME OVER — Best tile: {mt}  Moves: {move_num}")
             print(f"{'='*48}")
             print_board(board, "Final board")
-            return
+            return {"max_tile": mt, "moves": move_num, "won": won}
 
         direction = moves[0][1]
         move_num += 1
@@ -1450,6 +1603,8 @@ def play_ai(driver):
         print(f"\n⚠ play_ai exception: {e}")
         traceback.print_exc()
         print(f"  Last move: {move_num}, tracked_board: {tracked_board is not None}")
+        mt = max_tile(board) if board else 0
+        return {"max_tile": mt, "moves": move_num, "won": won}
 
 
 if __name__ == "__main__":
