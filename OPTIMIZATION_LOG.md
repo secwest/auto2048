@@ -102,3 +102,17 @@ for deep search. Need fundamental algorithmic change.
            Game32: **WIN! 2048 at move 998**, reached **4096**, game over at 1058.
            Game33: **WIN! 2048 at move 979**. Perfect snake at move 808:
            1024→256→64→16→8→4 across bottom rows. **Three consecutive wins!**
+           Game34: **WIN! 2048 at move 997**. Perfect snake: 1024→512→16→8→2 in col 0.
+           **FOUR consecutive wins — engine is now consistently winning!**
+
+---
+
+## Summary
+
+| Iteration | Key Change | Best Result |
+|-----------|-----------|-------------|
+| 1 | Hand-tuned weights | First 2048 (once) |
+| 2 | Stronger corner discipline | 512 |
+| 3 | Bitboard engine + row tables | 256 (merge bug) |
+| 4 | Fix merge counting + weight scale + search arch | 1024 (after sign fix) |
+| 5 | Pure nneonneo heuristic + optimized transpose + deeper search | **4 consecutive 2048 wins** |

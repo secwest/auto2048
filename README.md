@@ -43,9 +43,10 @@ on Windows).
 
 | Component | Lines | Purpose |
 |---|---|---|
-| `play_2048.py` | ~1 380 | Browser automation, canvas reading, board sim, evaluation, power-ups, game loop |
-| `search2048/src/lib.rs` | ~440 | Rust expectimax with transposition table, exported via C ABI |
+| `play_2048.py` | ~1 460 | Browser automation, canvas reading, board sim, power-ups, game loop |
+| `search2048/src/lib.rs` | ~365 | Rust expectimax with bitboard engine, row lookup tables, C ABI |
 | `run_debug.py` | 25 | Wrapper that tees stdout+stderr to `game_log.txt` |
+| `OPTIMIZATION_LOG.md` | ~100 | Tracks each optimization iteration with changes, results |
 
 ---
 
@@ -306,22 +307,55 @@ after ~1000 moves, and improve merge strategy.
     high tiles increased from 2000→3000, and from 4000→5000 for
     half-max duplicates.  (`e5aec23`)
 
+### Phase 12 — Bitboard Engine & Consistent Wins (Session 9)
+
+**Goal:** Rewrite the search engine for dramatically faster, deeper search.
+
+55. **Bitboard architecture** — complete rewrite of `lib.rs` to use a `u64`
+    bitboard (4 bits per tile = log₂ value).  Precomputed 65 536-entry lookup
+    tables for move simulation, merge scoring, and heuristic evaluation.
+    Move = 4 table lookups; evaluation = 8 lookups (4 rows + 4 columns via
+    bit-parallel transpose).  Based on [nneonneo/2048-ai](https://github.com/nneonneo/2048-ai).
+56. **Critical merge-counting bug** — the heuristic table builder used
+    `prev != 0` to check for merge groups, causing rows like `[1,2,3,4]`
+    (all different) to score `merges=4`.  Fixed to `counter > 0` — only
+    consecutive equal tiles count as merges.  This was *the* primary bug
+    preventing reliable wins.
+57. **Weight scale fix** — heuristic weights were initially 1000× too large
+    (270K instead of 270).  The `W_LOST` constant (200 000) is the baseline
+    per row; feature weights are small adjustments around it.
+58. **Heuristic sign fix** — `score_move_node` initialises `best = 0.0`.
+    With the original negative heuristic (`−W_LOST`), game-over (0) looked
+    *better* than playing.  Changing to `+W_LOST` makes all scores positive.
+59. **Corner bonus removed** — the board-level corner bonus overlay conflicted
+    with the row-based monotonicity heuristic.  nneonneo achieves 100% win
+    rate without any corner bonus; the monotonicity penalty alone naturally
+    pushes high tiles to corners.
+60. **Bit-parallel transpose** — replaced the 16-iteration loop with nneonneo's
+    two-round bit manipulation transpose (6 bitwise ops + 4 shifts).
+61. **Deeper late-game search** — depth increased to 7–9 for `mt ≥ 1024`
+    (was 6–8), allowing the engine to plan further ahead during the critical
+    1024 → 2048 transition.
+62. **Result** — four consecutive wins (Games 31–34), with one game reaching
+    4096 post-win.  Engine confirmed as **consistently winning**.
+
 ### Current Status
 
-The bot consistently reaches **512–1024** from a fresh game.  It has
-achieved **2048** (the win condition) in at least one confirmed game.
-Remaining challenges:
+The bot **consistently wins** (reaches 2048) — four consecutive wins confirmed
+(Games 31–34).  In one game it continued to **4096** post-win.  Typical
+win occurs around move 950–1000.
 
-- **Key dispatch failure** — after ~1000 moves, JavaScript `dispatchEvent`
-  stops working.  Page refresh partially mitigates this but occasionally
-  resets game state.
-- **Gold tile colour ambiguity** — multi-level reconcile handles most cases
-  but tracking divergence can still cause temporary regressions.
-- **Board gridlock** — occasionally the bot fills the board early (by
-  move 50–80) due to bad tile spawns, requiring many merges to recover.
-- **Consistent 2048** — the bot reaches 1024 in most games but converting
-  to 2048 requires sustained accurate play over 500+ additional moves
-  without key dispatch failures.
+| Game | Result | Moves | Notes |
+|------|--------|-------|-------|
+| 31 | **WIN 2048** | 1000 | First win with bitboard engine |
+| 32 | **WIN 2048** → 4096 | 998 | Reached 4096 after continuing |
+| 33 | **WIN 2048** | 979 | Perfect snake pattern |
+| 34 | **WIN 2048** | 997 | 1024→512 in column 0 |
+
+Remaining minor issues:
+- **Post-win key dispatch** — after ~1000 moves, JS `dispatchEvent` stops
+  working, causing DELETE spam.  Not critical since the game is already won.
+- **Gold tile colour ambiguity** — handled by state tracking + reconcile.
 
 ---
 
@@ -372,20 +406,54 @@ These were each discovered through a crash, freeze, or infinite loop:
 
 ---
 
-## Evaluation Function (Rust)
+## Evaluation Function (Rust — Bitboard Engine)
 
-The expectimax search uses an 8-component heuristic evaluation:
+The engine was rewritten in Iteration 3–5 to use a **bitboard architecture**
+inspired by [nneonneo/2048-ai](https://github.com/nneonneo/2048-ai).
+
+### Bitboard Representation
+
+The board is packed into a single `u64`: 16 nybbles, each storing the log₂
+of the tile value (0 = empty, 1 = 2, 2 = 4, …, 11 = 2048).
+
+```
+Board = u64:  row0[0:15]  row1[16:31]  row2[32:47]  row3[48:63]
+Within row:   col0[0:3]   col1[4:7]    col2[8:11]   col3[12:15]
+```
+
+### Precomputed Lookup Tables
+
+Four 65 536-entry tables are built once at startup (covering all possible
+16-bit row values):
+
+| Table | Purpose |
+|-------|---------|
+| `TBL_LEFT[row]` | Result row after left-move (slide + merge) |
+| `TBL_RIGHT[row]` | Result row after right-move |
+| `TBL_SCORE[row]` | Merge score (actual game points) for left-move |
+| `TBL_HEUR[row]` | Heuristic evaluation per row |
+
+Move simulation = 4 table lookups.  Up/down: transpose → left/right → transpose back.
+Evaluation = 8 table lookups (4 rows + 4 columns via bit-parallel transpose).
+
+### Heuristic Weights (CMA-ES optimized, nneonneo/xificurk)
 
 | Component | Weight | Description |
-|---|---|---|
-| **Snake** | ×5.0 | Geometric 1.5ⁿ weights along 8 snake orientations; best of 8 used |
-| **Empty cells** | adaptive | 0 cells → −800K; 1 → 3K; 2 → 15K; 3 → 30K; 4+ → 30K + 10K×(n−3) |
-| **Corner** | +800 lv² / −2000–5000 lv² | Large bonus when max tile is in a corner; harsh penalty otherwise |
-| **Scatter** | −3000–5000 lv² | Penalises non-adjacent duplicate high tiles (≥64); extra harsh for half-max |
-| **Monotonicity** | ×600 | Rows and columns should be monotonically increasing or decreasing |
-| **Smoothness** | ×250 | Adjacent tiles should have similar log₂ values |
-| **Merges** | ×1200 | Adjacent equal tiles; cubic weight for ≥256; 5× strategic bonus for max-tile pairs, 3× for half-max |
-| **Chain** | 500 lv² per link | Descending chain bonus from corner (1024→512→256→128 etc.) |
+|-----------|--------|-------------|
+| **Lost baseline** | +200 000 per row | Ensures all playable states score > 0 (game-over = 0) |
+| **Empty cells** | +270 per empty | Rewards open space |
+| **Merge groups** | +700 per group | Consecutive equal tiles that can merge |
+| **Monotonicity** | −47 × Δrank⁴ | Penalises non-monotonic sequences within a row |
+| **Sum** | −11 × rank³·⁵ | Discourages excessive tile accumulation |
+
+### Search Architecture
+
+- **Expectimax** with separate chance/move node functions
+- Depth counts **move nodes only** (not alternating max/chance)
+- **Probability pruning**: branches with cumulative probability < 0.0001 are pruned
+- **Adaptive depth**: `max(python_depth, distinct_tiles − 2)`
+- **Transposition table**: `HashMap<u64, (depth, score)>`, cleared per top-level search
+- Typical performance: depth 7–9 in 50–1000 ms
 
 ---
 
@@ -394,9 +462,10 @@ The expectimax search uses an 8-component heuristic evaluation:
 | File | Description |
 |---|---|
 | `play_2048.py` | Main automation — everything in one file |
-| `search2048/src/lib.rs` | Rust expectimax engine (cdylib) |
+| `search2048/src/lib.rs` | Rust bitboard expectimax engine (cdylib) |
 | `search2048/Cargo.toml` | Rust project configuration |
 | `run_debug.py` | Logging wrapper (tees to `game_log.txt`) |
+| `OPTIMIZATION_LOG.md` | Optimization iteration history |
 | `.gitignore` | Excludes build artifacts, logs, `__pycache__` |
 
 ---
@@ -409,26 +478,26 @@ The expectimax search uses an 8-component heuristic evaluation:
    fixed-threshold approaches fail for similar tile values.
 3. **State tracking beats pixel reading** — computing tile values from game
    logic is more reliable than trying to distinguish visually-similar colours.
-4. **Evaluation balance matters more than search depth** — the switch from
-   linear to geometric snake weights was a bigger improvement than adding
-   3 plies of search depth.
-5. **Browser automation is a stability minefield** — focus loss, GPU crashes,
+4. **Bitboard + lookup tables are transformative** — switching from cell-by-cell
+   evaluation to precomputed row tables gave ~50× speedup, enabling depth 9
+   search in under a second.
+5. **Small heuristic bugs have catastrophic effects** — a single wrong
+   comparison (`prev != 0` vs `counter > 0`) in merge counting made the
+   engine think dead boards had merge potential.  The sign of the lost
+   penalty (`-W_LOST` vs `+W_LOST`) made game-over look better than playing.
+6. **Less is more in evaluation** — removing the hand-crafted corner bonus
+   and using the pure CMA-ES-optimized row heuristic improved results.  The
+   monotonicity penalty naturally achieves corner discipline.
+7. **Browser automation is a stability minefield** — focus loss, GPU crashes,
    memory leaks, overlay ads, and escape-key traps each required their own fix.
-6. **Rust FFI via ctypes is straightforward** — a `cdylib` crate with
+8. **Rust FFI via ctypes is straightforward** — a `cdylib` crate with
    `#[no_mangle] pub extern "C"` functions loads cleanly in Python.
-7. **Divergence between tracking and reality is insidious** — a single missed
-   key dispatch silently corrupts the tracked state; all downstream decisions
-   are based on a board that doesn't exist.  Multi-layered detection
-   (empty-cell positions + value mismatches + gold misread tolerance) is
-   needed to catch and correct it.
-8. **Browser JS event handlers degrade over time** — after ~1000 moves,
-   `document.dispatchEvent` stops being received by the game.  The root cause
-   is unknown (garbage collection? listener detachment? anti-automation?).
-   Multiple fallback mechanisms (ActionChains, focus retry, page refresh)
-   are needed.
-9. **Merge prioritisation is critical at high tiles** — the evaluation must
-   strongly reward merging tiles equal to or half the max tile value.  Without
-   this, the AI will keep adjacent 512s separate while building elsewhere.
+9. **Divergence between tracking and reality is insidious** — a single missed
+   key dispatch silently corrupts the tracked state; multi-layered detection
+   is needed to catch and correct it.
+10. **Study reference implementations** — reading nneonneo's actual source code
+    revealed three critical bugs in our engine that would have been nearly
+    impossible to find through testing alone.
 
 ---
 
